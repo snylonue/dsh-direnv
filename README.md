@@ -101,20 +101,33 @@ or removed. It only reads: it never approves a file and needs no user approval.
 
 ## Installation
 
+### From GitHub
+
+
 ```sh
-dsh plugin --profile web add /path/to/dsh-direnv
-dsh --profile web --dump-config      # confirm the three rows are present
+dsh plugin --profile web add github:snylonue/dsh-direnv
+
+# If failed, allow the git repo to run its prepare script, then re-run step 1.
+cat >> ~/.dsh/profiles/web/pnpm-workspace.yaml <<'EOF'
+allowBuilds:
+  'dsh-direnv@git+https://github.com/snylonue/dsh-direnv.git': true
+EOF
 ```
 
-The bundle patch inserts three rows: the `direnv` provider, the shell
-integration, and the model-facing tools (`direnv_allow`, `direnv_reload`). The
-host must already provide a working `direnv`; nothing here installs it, and
-nothing here approves a file without an explicit user decision.
+### From a local path or tarball
+
+```sh
+dsh plugin --profile web add /path/to/dsh-direnv        # link:, requires dist/ to exist
+dsh plugin --profile web add /path/to/dsh-direnv.tgz    # packed, self-contained
+dsh --profile web --dump-config                         # confirm the three rows
+```
 
 **The plugin only takes effect after a restart.** DSH composes the plugin tree
 at boot, so an already-running host does not pick up newly installed rows; the
 settings-page plugin list reflects the live loader and will not show it until
 then either.
+
+To uninstall, use `dsh plugin --profile web remove dsh-direnv`.
 
 ## Requirements and limits
 
