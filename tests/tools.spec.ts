@@ -9,7 +9,7 @@
  */
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import DirenvService, { defaultConfig, type DirenvConfig } from '../src/provider.js'
@@ -105,10 +105,21 @@ async function harness(options: {
   allowCode?: number;
   allowStderr?: string;
   config?: Partial<DirenvConfig>;
+  /**
+   * The direnv export probe's stdout, keyed by the directory being probed. A
+   * test uses this to prove WHICH directory the tool reports on.
+   */
+  exportFor?: (dir: string) => string;
+  /** The directories actually probed, in order. */
+  probed?: string[];
+  /** Override the session workspace, for tests that need a nested layout. */
+  workspace?: string;
+  /** Override the RC under approval; its content is then the caller's concern. */
+  rcPath?: string;
 } = {}): Promise<Harness> {
-  const workspace = scratch()
-  const rcPath = join(workspace, '.envrc')
-  writeFileSync(rcPath, 'export ALLOW_TOOL_TEST=1\nexport SECOND=2\n')
+  const workspace = options.workspace ?? scratch()
+  const rcPath = options.rcPath ?? join(workspace, '.envrc')
+  if (options.rcPath === undefined) writeFileSync(rcPath, 'export ALLOW_TOOL_TEST=1\nexport SECOND=2\n')
 
   const ctx = new Context()
   captured = []
@@ -127,7 +138,17 @@ async function harness(options: {
     constructor(applyCtx: Context) {
       super(applyCtx, { ...defaultConfig, ...options.config }, {
         runAllow: (path: string) => allowSpy(path),
-        runExport: () => ({ code: 0, signal: null, stdout: '{}', stderr: '', timedOut: false, spawnFailed: false }),
+        runExport: (dir: string) => {
+          options.probed?.push(dir)
+          return {
+            code: 0,
+            signal: null,
+            stdout: options.exportFor?.(dir) ?? '{}',
+            stderr: '',
+            timedOut: false,
+            spawnFailed: false,
+          }
+        },
       })
     }
   })
@@ -327,6 +348,39 @@ describe('after an approval', () => {
       expect(typeof result.variables).toBe('number')
       expect(result.path).toBe(h.rcPath)
       expect(String(result.sha256)).toMatch(/^[0-9a-f]{64}$/);
+    } finally { await h.dispose() }
+  })
+
+  // Regression: the count must come from the RC's own directory. Reporting the
+  // session workspace instead is invisible when the two coincide (the common
+  // case, and what the test above covers) but wrong as soon as a command runs in
+  // a nested package, where a different .envrc governs.
+  it('counts the variables of the RC directory, not of the session workspace', async () => {
+    // The two directories are deliberately different: the workspace holds a
+    // nested package whose own .envrc governs commands run inside it.
+    const workspace = scratch()
+    const nested = join(workspace, 'packages', 'inner')
+    mkdirSync(nested, { recursive: true })
+    const rcPath = join(nested, '.envrc')
+    writeFileSync(rcPath, 'export NESTED_A=1\nexport NESTED_B=2\nexport NESTED_C=3\n')
+
+    const probed: string[] = []
+    const h = await harness({
+      config: { enabled: true },
+      workspace,
+      rcPath,
+      probed,
+      // Only the nested directory has an environment; the workspace root does not.
+      exportFor: (dir) => dir === nested ? '{"NESTED_A":"1","NESTED_B":"2","NESTED_C":"3"}' : '{}',
+    })
+    try {
+      const result = await h.call({ path: rcPath })
+      expect(result.outcome).toBe('approved')
+      // Three names, so the probe that answered was the nested directory's.
+      expect(result.variables).toBe(3)
+      expect(probed).toContain(nested)
+      // No "no .envrc governs this workspace" footer: it IS governed.
+      expect(String(result.detail)).not.toContain('no .envrc governs')
     } finally { await h.dispose() }
   })
 

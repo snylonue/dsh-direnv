@@ -22,6 +22,7 @@
  *
  * @module dsh-direnv/tools
  */
+import { dirname } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import z from '@deepseek-ai/schemastery'
@@ -151,9 +152,12 @@ export function apply(ctx: Context): void {
       if (!approved.ok) {
         return { outcome: 'refused' as const, path, detail: `dsh-direnv: the user approved, but direnv refused the write: ${approved.reason}` }
       }
-      // Count only names that will actually be set: a removal entry (a
-      // `.envrc`'s `unset`) is not an injected variable.
-      const after = ctx.direnv.statusFor(workspace ?? path.slice(0, path.lastIndexOf('/')))
+      // Report the directory the approval actually affects — the RC's own — not
+      // the session workspace, which is a different directory whenever a command
+      // runs in a nested package. Count only names that will be set: a `.envrc`'s
+      // `unset` is not an injected variable.
+      const approvedDir = dirname(path)
+      const after = ctx.direnv.statusFor(approvedDir)
       const variables = envNames(after.env).length
       return {
         outcome: 'approved' as const,
@@ -163,7 +167,7 @@ export function apply(ctx: Context): void {
         detail: [
           `dsh-direnv: approved ${path}.`,
           `The next bash command in this workspace receives ${variables} injected variable${variables === 1 ? '' : 's'}.`,
-          ...after.kind === 'injected' ? [] : [`Current state: ${ctx.direnv.describe(workspace ?? path)}.`],
+          ...after.kind === 'injected' ? [] : [`Current state: ${ctx.direnv.describe(approvedDir)}.`],
         ].join(' '),
       }
     },

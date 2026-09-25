@@ -106,6 +106,16 @@ describeReal('acceptance: unapproved -> approve -> injected', () => {
       } as never)
       expect(asked).toBe(1)
       expect(JSON.stringify(allowResult)).toContain('approved')
+      // The tool's report must be truthful about what the next command will
+      // receive, checked against the REAL direnv rather than a mock. This fixture
+      // has the workspace BE the RC's directory, so it cannot tell a probe of the
+      // wrong directory apart — `tools.spec.ts` covers that with a nested layout.
+      // What it pins here is that the real direnv's answer reaches the report at
+      // all: two variables were just authorized, so the count is exactly 2.
+      const reported = (allowResult as { value: { variables?: number; detail?: string } }).value
+      expect(reported.variables).toBe(2)
+      expect(String(reported.detail)).not.toContain('no .envrc governs')
+      // ...and the child really does receive them, asserted in STEP 3 below.
 
       // STEP 3 - the very next command receives the environment.
       const injected = await run('printf "%s|%s" "$PROJECT_TOOLCHAIN" "$API_BASE"')
