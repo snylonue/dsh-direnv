@@ -19,7 +19,7 @@
  * @module dsh-direnv
  */
 import { spawnSync } from 'node:child_process'
-import { isAbsolute, resolve as resolvePath } from 'node:path'
+import { dirname, isAbsolute, resolve as resolvePath } from 'node:path'
 import { Service, type Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import z from '@deepseek-ai/schemastery'
@@ -280,10 +280,23 @@ export default class DirenvService extends Service {
       }
     }
     // The approval just changed direnv's authorization, so every cached answer
-    // that depended on it is stale.
+    // that depended on it is stale. The cache is keyed by the directory that was
+    // probed, and with `followWorkdir` on that is the RC's own directory rather
+    // than the session workspace, so drop both.
+    this.invalidate(dirnameOf(rcPath))
     this.invalidate(workspace)
     return { ok: true }
   }
+}
+
+/**
+ * The directory that owns an RC file, which is the key a probe of that RC is
+ * cached under.
+ * @param rcPath - absolute path of a `.envrc`.
+ * @returns its directory.
+ */
+function dirnameOf(rcPath: string): string {
+  return dirname(resolvePath(rcPath))
 }
 
 /** The first non-empty line of a diagnostic, ANSI-stripped and bounded. */
