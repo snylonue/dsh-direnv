@@ -15,24 +15,6 @@ environment, and a blocked `.envrc` produces an actionable notice plus a
 | **Asks before allowing** | `direnv_allow` routes through DSH's approval channel; the user sees the path, its SHA-256, and a bounded preview |
 | **Fails closed** | a blocked, denied, or changed `.envrc` injects nothing and says so; no approval service means no approval |
 
-## Why not wrap the command
-
-The obvious implementation rewrites every command into
-`direnv exec <workspace> <shim> <original command>`. This plugin deliberately
-does not. Instead it asks direnv for the diff and merges it into the spawn
-environment:
-
-- **No injection surface.** Nothing workspace-controlled is ever interpolated
-  into a command line. There is no quoting layer to get wrong, and nothing to
-  escape.
-- **`DSH_*` cannot be forged.** A `.envrc` that exports `DSH_HOME=/evil` is
-  dropped by name, and the executor merges the harness snapshot *after* the
-  workspace map, so the managed namespace stays authoritative.
-- **`ps` stays clean.** Managed `DSH_*` values travel through the process
-  environment, not through a world-readable command string.
-- **Exit codes, signals, and stdin are untouched.** There is no extra `exec`
-  layer between the executor and the command.
-
 ## The blocked-workspace UX
 
 An unapproved `.envrc` does not fail the command and does not leak its
@@ -164,13 +146,6 @@ pnpm typecheck   # source AND tests
 pnpm test        # builds, then runs vitest
 ```
 
-No environment variables are required. The suite locates a usable `bash`
-itself (`DSH_TEST_BASH`, then `/bin/bash`, `/usr/bin/bash`,
-`/usr/local/bin/bash`, then `bash` on `PATH`), which matters on platforms
-such as NixOS that ship no `/bin/bash`. When `direnv` or `bash` genuinely
-cannot be found, the real-process suites skip **and say so** — a silently
-skipped suite otherwise looks exactly like a passing one.
-
 The suite (119 tests) runs in layers:
 
 - **pure core logic** — RC discovery, diff parsing, filtering, refusals, the
@@ -187,27 +162,6 @@ The suite (119 tests) runs in layers:
 
 Tests never touch the developer's real direnv authorization store: every
 workspace, `HOME`, and XDG root lives in one temp tree.
-
-### Why `pnpm-workspace.yaml` sets `allowBuilds`
-
-pnpm 11 treats a dependency build script it has not been told about as a hard
-error (`strictDepBuilds`), and when it writes its own "undecided" marker it uses
-the literal string `set this to true or false`. Left unset, that makes every
-`pnpm install` fail with `ERR_PNPM_IGNORED_BUILDS` — which looks alarming but
-means only that nobody has answered yet.
-
-The file therefore answers for all four: every entry is `false`, because none
-of these postinstalls is needed by the plugin or its tests. `node-pty` and
-`koffi` are reachable only through `subprocess-local`'s terminal path (out of
-scope here), `esbuild` is bundled by vitest, and `dsh-subprocess-local`'s hook
-does not affect the ordinary-command path. Flip one to `true` only if you add a
-test that genuinely needs its postinstall.
-
-Note also that this machine exports `NODE_ENV=production` globally, which makes
-`npm install` silently skip `devDependencies` and leave `tsc`/`vitest` missing
-(verified: `npm` installs 0 dev packages under it, 1 without it). `pnpm` is
-unaffected. Since the lockfile here is a pnpm lockfile, use `pnpm`; if you reach
-for `npm` instead, `unset NODE_ENV` first.
 
 ## License
 
