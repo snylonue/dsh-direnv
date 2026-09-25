@@ -1,0 +1,24 @@
+# dsh-direnv bundle patch: register the direnv provider, the shell adapter
+# that merges each workspace's native direnv environment into agent shell
+# calls, and the model-facing tools (direnv_allow, direnv_reload).
+#
+# The provider row states every deployed value explicitly because a patch row
+# replaces the whole config. The host must already provide a working `direnv`
+# executable; no row here installs direnv, and nothing here approves a file
+# without an explicit user decision through the approval channel.
+- insert:
+    - id: direnv
+      name: dsh-direnv
+      config:
+        executable: direnv
+        enabled: true
+        probeTimeoutMs: 10000
+        notifyOnBlocked: true
+        restrictAllowToWorkspace: true
+        followWorkdir: true
+        cache: true
+        previewBytes: 2048
+    - id: direnv-integration
+      name: dsh-direnv/integration-plugin
+    - id: direnv-tools
+      name: dsh-direnv/tools
