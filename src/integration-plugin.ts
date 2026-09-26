@@ -10,6 +10,7 @@
  */
 import { type Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
+import { installDirenvSessionContext } from './session-context.js'
 import { installDirenvShellAdapter } from './shell-adapter.js'
 
 export const name = 'direnv-integration'
@@ -25,6 +26,11 @@ export const Config = z.object({}) as z<Config>
 export function apply(ctx: Context, _config: Config): void {
   ctx.effect(() => {
     const adapter = installDirenvShellAdapter(ctx)
-    return () => adapter.dispose()
+    const sessionContext = installDirenvSessionContext(ctx)
+    return () => {
+      // Reverse install order, though both are independent.
+      sessionContext.dispose()
+      adapter.dispose()
+    }
   })
 }

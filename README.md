@@ -11,9 +11,35 @@ environment, and a blocked `.envrc` produces an actionable notice plus a
 |---|---|
 | **Injects** | the environment `direnv export json` reports for the command's directory, merged into the child's environment map |
 | **Per workspace** | the workspace comes from the calling agent's session cwd; the command's own `workdir` selects a nested `.envrc`, like native direnv |
+| **Announces at startup** | starting a session injects one model-facing snapshot naming the workspace's direnv variables, or why none loaded; values are never included and a workspace with no `.envrc` stays silent |
 | **Never wraps commands** | `request.command` is byte-identical to what the model asked for — injection is an environment map, so a workspace cannot inject shell syntax |
 | **Asks before allowing** | `direnv_allow` routes through DSH's approval channel; the user sees the path, its SHA-256, and a bounded preview |
 | **Fails closed** | a blocked, denied, or changed `.envrc` injects nothing and says so; no approval service means no approval |
+
+## Session-start context
+
+When a session starts, the plugin resolves its workspace once and queues one
+model-facing context message (`agent/session-start` + `agent.inject()`)
+before the first turn. The model therefore knows, without running anything,
+whether the workspace has an active direnv environment:
+
+```text
+[dsh-direnv] The workspace direnv environment is active.
+[dsh-direnv] /home/me/proj/.envrc injects 3 variable(s) into every bash command:
+[dsh-direnv]   API_BASE, PROJECT_TOOLCHAIN, RUST_LOG
+[dsh-direnv] Values are applied to each command's environment and are deliberately not shown here.
+```
+
+Only variable **names** are ever published — values may be secrets and stay in
+the execution environment. A blocked, denied, or failed workspace gets the same
+actionable wording as the command notice, so the model can call `direnv_allow`
+immediately. A workspace with no `.envrc` stays silent, and the message is a
+`snapshot`: a resumed or compacted session re-publishes the current state
+instead of accumulating stale copies.
+
+Resolving at startup also warms the per-directory cache, so the session's first
+bash command reuses that probe instead of paying for a second one. Set
+`sessionContext: false` to suppress the message entirely.
 
 ## The blocked-workspace UX
 
@@ -82,6 +108,7 @@ or removed. It only reads: it never approves a file and needs no user approval.
     enabled: true               # master switch
     probeTimeoutMs: 10000       # budget for one direnv run
     notifyOnBlocked: true       # append the actionable notice to results
+    sessionContext: true        # inject one model-facing snapshot at session start
     restrictAllowToWorkspace: true  # direnv_allow may only name a file inside the agent's workspace
     followWorkdir: true         # the command's own directory selects the .envrc
     cache: true                 # resolve each directory once; reload on demand
@@ -94,6 +121,7 @@ or removed. It only reads: it never approves a file and needs no user approval.
 | `enabled` | `true` | When off, the adapter is inert and no probe runs. |
 | `probeTimeoutMs` | `10000` | One `direnv export json` run is killed past this. |
 | `notifyOnBlocked` | `true` | Off keeps results byte-identical to an un-instrumented run. |
+| `sessionContext` | `true` | On, starting a session injects one model-facing snapshot naming the workspace's direnv variables (or why none loaded). Values are never included. |
 | `restrictAllowToWorkspace` | `true` | On, `direnv_allow` refuses any path outside the agent's workspace, including via `..` or a symlink. |
 | `followWorkdir` | `true` | On, a command run in `<ws>/packages/api` picks up *that* `.envrc`. Off, every command uses the session workspace root. |
 | `cache` | `true` | Resolve each directory once and reuse the result. The cache refreshes itself when the `.envrc` changes or when direnv's allow/deny store is rewritten, and `direnv_reload` forces a refresh. Off, every command pays the probe (about 35 ms for an allowed `.envrc`). |
@@ -133,6 +161,9 @@ To uninstall, use `dsh plugin --profile web remove dsh-direnv`.
 
 - **The `shell` service must exist.** The provider injects into `ctx.shell`'s
   calls; without a shell there is nothing to inject, so activation fails loudly.
+- **The session-start context is best-effort.** A missing `direnv`, an
+  unreadable workspace, or a failed injection never blocks session startup; the
+  model simply learns the state when it runs a command.
 - **Approval is required for `direnv_allow`.** With no approval channel composed,
   the tool refuses rather than approving on its own.
 - **`direnv deny` semantics are direnv's.** On direnv >= 2.33 a denied `.envrc`
@@ -159,14 +190,17 @@ pnpm typecheck   # source AND tests
 pnpm test        # builds, then runs vitest
 ```
 
-The suite (119 tests) runs in layers:
+The suite (132 tests) runs in layers:
 
 - **pure core logic** — RC discovery, diff parsing, filtering, refusals, the
-  cache stamp, and the deny-store hash the plugin reproduces from direnv;
+  cache stamp, the session-start context renderer, and the deny-store hash the
+  plugin reproduces from direnv;
 - **the method chain**, including the non-LIFO disposal case a naive
   descriptor-restoring wrapper gets wrong;
 - **the approval gate**, asserting that nothing reaches `direnv allow` without
   an explicit `allowed-once`;
+- **the session-start path**, asserting what a real `agent/session-start`
+  event queues and that the startup probe warms the cache;
 - **end-to-end runs against the real `direnv` binary**;
 - **real compositions** that boot `dsh-subprocess-local` + `dsh-bash-local` +
   `dsh-shell-env` + `dsh-tool-bash`, drive the model-facing `bash`,

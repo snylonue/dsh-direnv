@@ -31,6 +31,17 @@ export const MANAGED_ENV_PREFIX = 'DSH_'
 /** The config file names native direnv looks for, nearest-first. */
 export const RC_NAMES = ['.envrc', '.env'] as const
 
+/** The plugin name carried on the session-start context message and its section. */
+export const SESSION_CONTEXT_PLUGIN = 'dsh-direnv'
+
+/**
+ * Cap on the variable names a session-start context lists, so a Nix-scale
+ * environment (hundreds of names) stays a readable snapshot instead of
+ * flooding the first request. The count is always exact even when the list is
+ * elided.
+ */
+export const SESSION_CONTEXT_MAX_NAMES = 64
+
 /** Config of the dsh-direnv plugin, validated strictly. */
 export interface DirenvConfig {
   /** The direnv executable: a bare PATH name or an absolute path. */
@@ -47,6 +58,14 @@ export interface DirenvConfig {
    * notice. Disabling it keeps results byte-identical to the un-injected run.
    */
   notifyOnBlocked: boolean
+  /**
+   * Whether starting a session injects one model-facing context message that
+   * states the workspace's direnv state: which variable NAMES are injected, or
+   * why none are (blocked, denied, error). Values are never included, and a
+   * workspace with no `.envrc` stays silent. Off means the model learns about
+   * direnv only from command notices.
+   */
+  sessionContext: boolean
   /**
    * Whether `direnv_allow` may only approve a file inside the calling agent's
    * own workspace root. Turn off only when the model is trusted to request
@@ -83,6 +102,7 @@ export const defaultConfig: DirenvConfig = {
   enabled: true,
   probeTimeoutMs: 10_000,
   notifyOnBlocked: true,
+  sessionContext: true,
   restrictAllowToWorkspace: true,
   followWorkdir: true,
   cache: true,
@@ -581,6 +601,67 @@ export function blockedNotice(status: DirenvStatus, workspace: string): string |
     ].join('\n')
   }
   return undefined
+}
+
+/**
+ * The model-facing context injected once when a session starts, or `undefined`
+ * when the workspace has nothing to say (`no-rc`, `disabled`).
+ *
+ * The text names the injected variables but never their values: values belong
+ * to the workspace and may be secrets, so the message is a snapshot of WHICH
+ * environment a session has, not of the environment itself. The text is
+ * self-identifying because it arrives as a plugin-sourced user message with no
+ * surrounding command output to attribute it.
+ */
+export function sessionContextText(status: DirenvStatus, workspace: string): string | undefined {
+  const prefix = `[${SESSION_CONTEXT_PLUGIN}]`
+  switch (status.kind) {
+    case 'disabled':
+    case 'no-rc':
+      return undefined
+    case 'injected': {
+      // Count only names that will be SET; a `.envrc`'s `unset` is not an
+      // injected variable and must not inflate the list or its count.
+      const names = Object.entries(status.env)
+        .filter(([, value]) => value !== undefined)
+        .map(([name]) => name)
+        .sort()
+      const shown = names.slice(0, SESSION_CONTEXT_MAX_NAMES)
+      const hidden = names.length - shown.length
+      const list = shown.length === 0
+        ? '(no variables; this .envrc only unsets names)'
+        : `${shown.join(', ')}${hidden > 0 ? `, and ${String(hidden)} more` : ''}`
+      return [
+        `${prefix} The workspace direnv environment is active.`,
+        `${prefix} ${status.rcPath ?? 'The governing .envrc'} injects ${String(names.length)} variable(s) into every bash command:`,
+        `${prefix}   ${list}`,
+        `${prefix} Values are applied to each command's environment and are deliberately not shown here.`,
+      ].join('\n')
+    }
+    case 'blocked': {
+      const target = status.rcPath ?? 'the workspace .envrc'
+      return [
+        `${prefix} The workspace direnv environment is NOT loaded: ${target} is not approved.`,
+        `${prefix} Call the direnv_allow tool with this path to ask the user to approve it:`,
+        `${prefix}   direnv_allow path=${target}`,
+        `${prefix} Workspace: ${workspace}`,
+      ].join('\n')
+    }
+    case 'denied': {
+      const target = status.rcPath ?? 'the workspace .envrc'
+      return [
+        `${prefix} The workspace direnv environment is NOT loaded: ${target} is denied.`,
+        `${prefix} Ask the user to check it with: direnv status`,
+        `${prefix} Workspace: ${workspace}`,
+      ].join('\n')
+    }
+    case 'error':
+      return [
+        `${prefix} The workspace direnv environment is NOT loaded.`,
+        `${prefix} ${status.detail ?? 'direnv could not be consulted.'}`,
+        `${prefix} Workspace: ${workspace}`,
+      ].join('\n')
+  }
 }
 
 /**

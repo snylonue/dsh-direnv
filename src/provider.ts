@@ -99,6 +99,7 @@ export default class DirenvService extends Service {
     enabled: z.boolean().default(defaultConfig.enabled),
     probeTimeoutMs: z.natural().min(1).max(600_000).default(defaultConfig.probeTimeoutMs),
     notifyOnBlocked: z.boolean().default(defaultConfig.notifyOnBlocked),
+    sessionContext: z.boolean().default(defaultConfig.sessionContext),
     restrictAllowToWorkspace: z.boolean().default(defaultConfig.restrictAllowToWorkspace),
     followWorkdir: z.boolean().default(defaultConfig.followWorkdir),
     cache: z.boolean().default(defaultConfig.cache),

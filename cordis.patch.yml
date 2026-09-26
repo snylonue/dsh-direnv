@@ -1,6 +1,7 @@
 # dsh-direnv bundle patch: register the direnv provider, the shell adapter
 # that merges each workspace's native direnv environment into agent shell
-# calls, and the model-facing tools (direnv_allow, direnv_reload).
+# calls, the session-start context that tells the model which environment a
+# session has, and the model-facing tools (direnv_allow, direnv_reload).
 #
 # The provider row states every deployed value explicitly because a patch row
 # replaces the whole config. The host must already provide a working `direnv`
@@ -14,6 +15,7 @@
         enabled: true
         probeTimeoutMs: 10000
         notifyOnBlocked: true
+        sessionContext: true
         restrictAllowToWorkspace: true
         followWorkdir: true
         cache: true
