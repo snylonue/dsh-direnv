@@ -82,8 +82,8 @@ describeReal('acceptance: unapproved -> approve -> injected', () => {
     currentAgent = { session: { header: { cwd: workspace } } }
     asked = 0
 
-    const run = (command: string) =>
-      ctx.shell.run(ctx.shell.resolve({ command } as never))
+    const run = async (command: string) =>
+      (await ctx.shell.execute(ctx.shell.resolve({ command } as never))).result()
 
     try {
       // STEP 1 - unapproved: the command runs, gets no workspace env, and the

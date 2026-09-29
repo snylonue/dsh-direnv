@@ -56,9 +56,9 @@ describeReal('unset semantics against a real child', () => {
     const adapter = installDirenvShellAdapter(ctx)
     currentAgent = { session: { header: { cwd: ws } } }
     try {
-      const result = await ctx.shell.run(ctx.shell.resolve({
+      const result = await (await ctx.shell.execute(ctx.shell.resolve({
         command: 'printf "[%s]|[%s]" "${INHERITED_VAR-unset}" "${ADDED-unset}"',
-      } as never))
+      } as never))).result()
       // The variable WAS inherited from the parent, and `unset` in the .envrc
       // must actually remove it from the child — not merely leave it alone.
       expect(result.stdout.text).toBe('[unset]|[yes]')

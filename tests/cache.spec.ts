@@ -48,7 +48,7 @@ class FakeAgents extends Service {
 /** Boot the service with a counting probe, all in the sandbox environment. */
 async function boot(box: Sandbox, overrides: Partial<DirenvConfig> = {}) {
   const ctx = new Context()
-  ctx.provide('shell', { resolve: () => ({}), run: () => Promise.resolve({}), start: () => ({}) })
+  ctx.provide('shell', { resolve: () => ({}), execute: () => Promise.resolve({}) })
   const agentsFiber = await ctx.plugin(FakeAgents)
   let probes = 0
   const config: DirenvConfig = { ...defaultConfig, ...overrides }

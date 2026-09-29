@@ -26,7 +26,17 @@ export const Config = z.object({}) as z<Config>
 export function apply(ctx: Context, _config: Config): void {
   ctx.effect(() => {
     const adapter = installDirenvShellAdapter(ctx)
-    const sessionContext = installDirenvSessionContext(ctx)
+    let sessionContext
+    try {
+      sessionContext = installDirenvSessionContext(ctx)
+    } catch (error) {
+      // The effect's disposer is never registered when its setup throws, so a
+      // failure here would strand `adapter` on the shell provider after this
+      // fiber goes inactive — every later shell call would then fault on the
+      // dead `ctx.direnv` it reads per call.
+      adapter.dispose()
+      throw error
+    }
     return () => {
       // Reverse install order, though both are independent.
       sessionContext.dispose()

@@ -47,7 +47,7 @@ async function boot() {
   const rcPath = join(workspace, '.envrc')
   writeFileSync(rcPath, 'export DISPATCH_TEST=1\n')
   const ctx = new Context()
-  ctx.provide('shell', { resolve: () => ({}), run: () => Promise.resolve({}), start: () => ({}) })
+  ctx.provide('shell', { resolve: () => ({}), execute: () => Promise.resolve({}) })
   const fibers = [] as Array<{ dispose(): Promise<void> }>
   fibers.push(await ctx.plugin(ToolRuntime))
   fibers.push(await ctx.plugin(SystemPrompt, {}))

@@ -27,7 +27,7 @@ describe('seam removal convention', () => {
         command: 'printf "[%s]" "${REMOVE_ME-unset}"',
         env: { REMOVE_ME: undefined as unknown as string },
       } as never)
-      const result = await ctx.shell.run(spec)
+      const result = await (await ctx.shell.execute(spec)).result()
       console.log('undefined-value child saw:', result.stdout.text)
       expect(result.stdout.text).toBe('[unset]')
     } finally {

@@ -14,7 +14,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
-import type { ShellExecRequest, ShellExecSpec, ShellProcess, ShellRunResult } from '@deepseek-ai/dsh-shell'
+import type { ShellExecRequest, ShellExecSpec, ShellExecution } from '@deepseek-ai/dsh-shell'
 import { afterAll, describe, expect, it } from 'vitest'
 import DirenvService, { defaultConfig, type DirenvConfig } from '../src/provider.js'
 import { BASH, HAS_DIRENV, requireRealProcesses } from './helpers.js'
@@ -142,23 +142,54 @@ class RecordingShell {
     return spec
   }
 
-  run(spec: ShellExecSpec): Promise<ShellRunResult> {
-    this.specs.push(spec)
-    return Promise.resolve({
-      exitCode: 0, signal: null, timedOut: false, aborted: false, timeoutMs: spec.timeoutMs,
-      stdout: { text: '', truncated: false },
-      stderr: { text: '', truncated: false },
-    })
+  /** Resolve and record, exactly as the real executors' callers do. */
+  run(request: ShellExecRequest): ShellExecution {
+    return this.execute(this.resolve(request))
   }
 
-  start(spec: ShellExecSpec): ShellProcess {
+  execute(spec: ShellExecSpec): Promise<ShellExecution> {
     this.specs.push(spec)
-    return {
-      status: 'completed', exitCode: 0, signal: null, done: Promise.resolve(),
-      readOutput: () => ({ delta: '', lossy: false }),
-      kill: () => false,
-    }
+    return Promise.resolve(resultOf(spec, ''))
   }
+}
+
+/**
+ * One fake execution handle matching the real executor's shape: a live
+ * `status`/`exitCode`, a consuming `readOutput`, and the non-consuming
+ * `observed` stream readers the job registry pumps.
+ */
+function resultOf(spec: ShellExecSpec, stderrText: string): ShellExecution {
+  let readOffset = 0
+  let observedOffset = 0
+  const handle = {
+    status: 'completed' as const,
+    exitCode: 0,
+    signal: null,
+    sandbox: undefined,
+    done: Promise.resolve(),
+    readOutput: () => {
+      const delta = readOffset === 0 ? stderrText : ''
+      readOffset = stderrText.length
+      return { delta, lossy: false }
+    },
+    observed: {
+      stdout: { readFrom: (from: number) => ({ text: '', nextOffset: from, lossy: false }) },
+      stderr: {
+        readFrom: (from: number) => {
+          const text = stderrText.slice(Math.min(from, stderrText.length))
+          observedOffset = stderrText.length
+          return { text, nextOffset: observedOffset, lossy: false }
+        },
+      },
+    },
+    kill: () => false,
+    result: () => Promise.resolve({
+      exitCode: 0, signal: null, timedOut: false, aborted: false, timeoutMs: spec.timeoutMs,
+      stdout: { text: '', truncated: false },
+      stderr: { text: stderrText, truncated: false },
+    }),
+  }
+  return handle as unknown as ShellExecution
 }
 
 /**
@@ -269,7 +300,7 @@ describeReal('direnv injection (real direnv)', () => {
     writeRc(box, '.', 'export SHOULD_NOT_APPEAR=1\n', false)
     const app = await boot(box)
     try {
-      const result = await app.ctx.shell.run(app.shell.resolve({ command: 'true' }))
+      const result = await (await app.ctx.shell.execute(app.shell.resolve({ command: 'true' }))).result()
       expect(app.shell.last().env).toBeUndefined()
       expect(result.stderr.text).toContain('[dsh-direnv]')
       expect(result.stderr.text).toContain('direnv_allow')
@@ -283,7 +314,7 @@ describeReal('direnv injection (real direnv)', () => {
     writeRc(box, '.', 'export X=1\n', false)
     const app = await boot(box, { notifyOnBlocked: false })
     try {
-      const result = await app.ctx.shell.run(app.shell.resolve({ command: 'true' }))
+      const result = await (await app.ctx.shell.execute(app.shell.resolve({ command: 'true' }))).result()
       expect(result.stderr.text).toBe('')
     } finally { await app.dispose() }
   })
@@ -340,7 +371,7 @@ describeReal('direnv injection (real direnv)', () => {
       app.shell.run(app.shell.resolve({ command: 'true' }))
       expect(app.shell.last().env?.V).toBe('v1')
       writeFileSync(rc, 'export V=v2\n')
-      const blocked = await app.ctx.shell.run(app.shell.resolve({ command: 'true' }))
+      const blocked = await (await app.ctx.shell.execute(app.shell.resolve({ command: 'true' }))).result()
       expect(app.shell.last().env).toBeUndefined()
       expect(blocked.stderr.text).toContain('[dsh-direnv]')
       allowWithRealDirenv(box, rc)
@@ -442,7 +473,7 @@ describeReal('direnv injection (real direnv)', () => {
     writeRc(box, '.', '')
     const app = await boot(box)
     try {
-      const result = await app.ctx.shell.run(app.shell.resolve({ command: 'true' }))
+      const result = await (await app.ctx.shell.execute(app.shell.resolve({ command: 'true' }))).result()
       expect(Object.keys(app.shell.last().env ?? {})).toHaveLength(0)
       expect(result.stderr.text).not.toContain('[dsh-direnv]')
     } finally { await app.dispose() }
@@ -453,7 +484,7 @@ describeReal('direnv injection (real direnv)', () => {
     writeRc(box, '.', 'export X=1\n')
     const app = await boot(box)
     try {
-      const proc = app.ctx.shell.start(app.shell.resolve({ command: 'true' }))
+      const proc = await app.ctx.shell.execute(app.shell.resolve({ command: 'true' }))
       expect(proc.readOutput().delta).toBe('')
       expect(app.shell.last().env?.X).toBe('1')
     } finally { await app.dispose() }
@@ -464,9 +495,23 @@ describeReal('direnv injection (real direnv)', () => {
     writeRc(box, '.', 'export X=1\n', false)
     const app = await boot(box)
     try {
-      const proc = app.ctx.shell.start(app.shell.resolve({ command: 'true' }))
+      const proc = await app.ctx.shell.execute(app.shell.resolve({ command: 'true' }))
       expect(proc.readOutput().delta).toContain('[dsh-direnv]')
       expect(proc.readOutput().delta).not.toContain('[dsh-direnv]')
+    } finally { await app.dispose() }
+  })
+
+  it('surfaces the notice on the observed stderr the job registry pumps', async () => {
+    const box = sandbox()
+    writeRc(box, '.', 'export X=1\n', false)
+    const app = await boot(box)
+    try {
+      const proc = await app.ctx.shell.execute(app.shell.resolve({ command: 'true' }))
+      const first = proc.observed.stderr.readFrom(0)
+      expect(first.text).toContain('[dsh-direnv]')
+      // A second, independent reader at a later offset never repeats the notice,
+      // and the consuming cursor never stole those bytes from it.
+      expect(proc.observed.stderr.readFrom(first.nextOffset).text).not.toContain('[dsh-direnv]')
     } finally { await app.dispose() }
   })
 
@@ -476,7 +521,7 @@ describeReal('direnv injection (real direnv)', () => {
     const probe = () => ({ code: 0, signal: null, stdout: 'not json', stderr: '', timedOut: false, spawnFailed: false })
     const app = await boot(box, {}, probe as never)
     try {
-      const result = await app.ctx.shell.run(app.ctx.shell.resolve({ command: 'true' }))
+      const result = await (await app.ctx.shell.execute(app.ctx.shell.resolve({ command: 'true' }))).result()
       expect(app.shell.last().env).toBeUndefined()
       expect(result.stderr.text).toContain('[dsh-direnv]')
     } finally {
@@ -490,7 +535,7 @@ describeReal('direnv injection (real direnv)', () => {
     const probe = () => ({ code: null, signal: 'SIGKILL' as const, stdout: '', stderr: '', timedOut: true, spawnFailed: false })
     const app = await boot(box, {}, probe as never)
     try {
-      const result = await app.ctx.shell.run(app.ctx.shell.resolve({ command: 'true' }))
+      const result = await (await app.ctx.shell.execute(app.ctx.shell.resolve({ command: 'true' }))).result()
       expect(app.shell.last().env).toBeUndefined()
       expect(result.stderr.text).toContain('timed out')
     } finally {
@@ -506,12 +551,52 @@ describeReal('direnv injection (real direnv)', () => {
     const app2 = await boot(box, { executable: '/nonexistent/direnv' })
     void app
     try {
-      const result = await app2.ctx.shell.run(app2.ctx.shell.resolve({ command: 'true' }))
+      const result = await (await app2.ctx.shell.execute(app2.ctx.shell.resolve({ command: 'true' }))).result()
       expect(app2.shell.last().env).toBeUndefined()
       expect(result.stderr.text).toContain('could not be started')
     } finally {
       await app2.dispose()
       await app.dispose()
+    }
+  })
+})
+
+/**
+ * The regression that mattered in production: the adapter used to wrap the
+ * pre-`execute` `run`/`start` methods, throw on the host that only has
+ * `execute`, and leave the already-installed `resolve` wrapper behind. Because
+ * that dead wrapper reads `ctx.direnv` per call, every later shell call — even
+ * a plain `bash` command — failed with "cannot get required service direnv in
+ * inactive context".
+ */
+describe('adapter installation against a shell provider with no execute', () => {
+  it('leaves no wrapper behind when the seam does not match', async () => {
+    const ctx = new Context()
+    // A provider exposing only the old methods: the adapter must fail loudly
+    // WITHOUT touching `resolve`.
+    const legacy = {
+      resolve: (request: ShellExecRequest) => request,
+      run: () => Promise.resolve({}),
+      start: () => ({}),
+    }
+    ctx.provide('shell', legacy as never)
+    const agents = await ctx.plugin(FakeAgents)
+    const service = await ctx.plugin(class extends DirenvService {
+      constructor(applyCtx: Context) {
+        super(applyCtx, { ...defaultConfig }, { env: { ...process.env }, runExport: () => { throw new Error('unused') } })
+      }
+    })
+    currentAgent = { session: { header: { cwd: '/tmp' } } }
+    try {
+      const before = ctx.shell.resolve
+      expect(() => installDirenvShellAdapter(ctx)).toThrow(/cannot wrap non-function method execute/)
+      // The failed install must be atomic: `resolve` is exactly as it was.
+      expect(ctx.shell.resolve).toBe(before)
+      const request = { command: 'true' }
+      expect(ctx.shell.resolve(request as never)).toBe(request)
+    } finally {
+      await service.dispose()
+      await agents.dispose()
     }
   })
 })

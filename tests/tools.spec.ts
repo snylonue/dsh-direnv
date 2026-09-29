@@ -127,7 +127,7 @@ async function harness(options: {
   answer = options.outcome ?? 'allowed-once'
   // DirenvService injects `shell`; the tool only needs it to exist so the
   // provider activates, never to execute anything.
-  ctx.provide('shell', { resolve: () => ({}), run: () => Promise.resolve({}), start: () => ({}) })
+  ctx.provide('shell', { resolve: () => ({}), execute: () => Promise.resolve({}) })
   const toolsFiber = await ctx.plugin(CapturingTools)
   const promptFiber = await ctx.plugin(FakePrompt)
   const approvalFiber = options.withApproval === false ? undefined : await ctx.plugin(FakeApproval)

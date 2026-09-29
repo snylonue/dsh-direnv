@@ -84,7 +84,7 @@ const describeReal = requireRealProcesses('real-composition tests') ? describe :
 /** Run one real command through the composed bash executor. */
 async function bash(app: { ctx: Context }, command: string, extra: Record<string, unknown> = {}) {
   const spec = app.ctx.shell.resolve({ command, ...extra } as never)
-  return app.ctx.shell.run(spec)
+  return (await app.ctx.shell.execute(spec)).result()
 }
 
 describeReal('real composition: bash-local + shell-env + tool-bash + dsh-direnv', () => {
