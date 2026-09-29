@@ -210,11 +210,11 @@ export function installDirenvShellAdapter(ctx: Context): DirenvShellAdapterHandl
     try {
       return installChainLink(ctx.shell, 'execute', (next, _thisArg, args) => {
         const notice = recall(args[0])
-        const outcome = next()
-        if (notice === undefined) return outcome
+        const outcome = next() as Promise<ShellExecution> | undefined
+        if (notice === undefined || outcome === undefined) return outcome
         // `execute` resolves the prepared handle; guard the shape instead of assuming it.
-        if (typeof (outcome as Promise<ShellExecution> | undefined)?.then !== 'function') return outcome
-        return (outcome as Promise<ShellExecution>).then((execution) => withNotice(execution, notice))
+        if (typeof outcome.then !== 'function') return outcome
+        return outcome.then((execution) => withNotice(execution, notice))
       })
     } catch (error) {
       for (const handle of handles.splice(0).reverse()) handle.dispose()

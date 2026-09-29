@@ -142,8 +142,8 @@ class RecordingShell {
     return spec
   }
 
-  /** Resolve and record, exactly as the real executors' callers do. */
-  run(request: ShellExecRequest): ShellExecution {
+  /** Resolve and record; callers that only inspect `last()` ignore the handle. */
+  run(request: ShellExecRequest): Promise<ShellExecution> {
     return this.execute(this.resolve(request))
   }
 
