@@ -3,7 +3,7 @@
  *
  * The pure renderer is exercised directly; the injection path runs against the
  * REAL `DirenvService` with only its probe seam replaced, so the assertions
- * observe what a live `agent/session-start` would actually queue — without
+ * observe what a live `agent/created` would actually queue — without
  * needing the `direnv` binary or a shell.
  *
  * @module tests/session-context
@@ -165,7 +165,7 @@ describe('injectSessionContext', () => {
       injectSessionContext(app.ctx, app.agent)
       expect(app.injected).toHaveLength(1)
       const message = app.injected[0]
-      expect(message?.source).toMatchObject({ kind: 'plugin', plugin: SESSION_CONTEXT_PLUGIN, form: 'snapshot' })
+      expect(message?.source).toMatchObject({ kind: SESSION_CONTEXT_PLUGIN, form: 'snapshot' })
       const text = (message?.content[0] as { text: string }).text
       expect(text).toContain('E2E_ONE, E2E_TWO')
       expect(text).not.toContain('alpha')
@@ -231,14 +231,14 @@ describe('injectSessionContext', () => {
     }
   })
 
-  it('runs from a real agent/session-start event', async () => {
+  it('runs from a real agent/created event', async () => {
     const app = await boot({ rcPath: join(scratch(), '.envrc'), probe: () => exported({ A: '1' }) })
     try {
       const listener = installDirenvSessionContext(app.ctx)
-      emitAgentEvent(app.ctx, app.agent, 'agent/session-start', { source: 'startup' })
+      emitAgentEvent(app.ctx, app.agent, 'agent/created', { source: 'startup' })
       expect(app.injected).toHaveLength(1)
       listener.dispose()
-      emitAgentEvent(app.ctx, app.agent, 'agent/session-start', { source: 'resume' })
+      emitAgentEvent(app.ctx, app.agent, 'agent/created', { source: 'resume' })
       expect(app.injected).toHaveLength(1)
     } finally {
       await app.dispose()

@@ -3,11 +3,12 @@
  * state once and seed the model with a snapshot of it.
  *
  * This is the one true "inject at session start" seam in DSH:
- * `agent/session-start` fires once before the first turn, and `agent.inject()`
- * queues model-facing context for the next pre-step. The injected message names
- * the workspace's direnv variables and states, but never their values, and it
- * resolves through the same provider cache the shell adapter uses — so the
- * first command after startup reuses this probe instead of paying for another.
+ * `agent/created` fires once per entered agent, before its first turn, and
+ * `agent.inject()` queues model-facing context for the next pre-step. The
+ * injected message names the workspace's direnv variables and states, but never
+ * their values, and it resolves through the same provider cache the shell
+ * adapter uses — so the first command after startup reuses this probe instead
+ * of paying for another.
  *
  * Injection is best-effort by design. A session must still start when direnv is
  * missing, a workspace is unreadable, or a context message cannot be appended,
@@ -18,8 +19,14 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, type ContextFormed } from '@deepseek-ai/dsh-llm'
 import { SESSION_CONTEXT_PLUGIN, sessionContextText } from './core.js'
+
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'dsh-direnv': { kind: 'dsh-direnv' } & ContextFormed
+  }
+}
 
 /** The session-context listener's disposal boundary. */
 export interface DirenvSessionContextHandle {
@@ -60,8 +67,7 @@ export function injectSessionContext(ctx: Context, agent: Agent): void {
       // the same producer supersedes an earlier one" — a resumed or compacted
       // session therefore re-publishes instead of accumulating stale copies.
       source: {
-        kind: 'plugin',
-        plugin: SESSION_CONTEXT_PLUGIN,
+        kind: SESSION_CONTEXT_PLUGIN,
         form: 'snapshot',
         sections: [{ name: SESSION_CONTEXT_PLUGIN, text }],
       },
@@ -76,7 +82,11 @@ export function injectSessionContext(ctx: Context, agent: Agent): void {
 }
 
 /**
- * Install the `agent/session-start` listener that seeds the context.
+ * Install the `agent/created` listener that seeds the context.
+ *
+ * `agent/created` is 0.1.7's per-agent initialization hook — the old
+ * `agent/session-start` no longer exists — and it fires once per entered agent
+ * for fresh creation, resume, clear, and compaction alike.
  *
  * The listener is registered on `ctx` and therefore disposed with the calling
  * fiber even without an explicit {@link DirenvSessionContextHandle.dispose}.
@@ -85,8 +95,9 @@ export function injectSessionContext(ctx: Context, agent: Agent): void {
  * @returns the handle that removes the listener.
  */
 export function installDirenvSessionContext(ctx: Context): DirenvSessionContextHandle {
-  const off = ctx.on('agent/session-start', ({ agent }) => {
+  const off = ctx.on('agent/created', ({ agent }) => {
     injectSessionContext(ctx, agent)
+    return undefined
   })
   return { dispose: () => void off() }
 }

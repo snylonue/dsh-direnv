@@ -127,6 +127,7 @@ class RecordingShell {
       command: request.command,
       workdir: request.workdir ?? '/default-workdir',
       timeoutMs: request.timeoutMs ?? 1_000,
+      onExpiry: request.onExpiry ?? 'kill',
       stdoutMaxBytes: request.stdoutMaxBytes ?? 1_024,
       ...request.signal !== undefined ? { signal: request.signal } : {},
       ...request.stdin !== undefined ? { stdin: request.stdin } : {},
