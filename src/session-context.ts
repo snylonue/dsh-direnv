@@ -84,7 +84,7 @@ export function injectSessionContext(ctx: Context, agent: Agent): void {
 /**
  * Install the `agent/created` listener that seeds the context.
  *
- * `agent/created` is 0.1.7's per-agent initialization hook — the old
+ * `agent/created` is the per-agent initialization hook — the old
  * `agent/session-start` no longer exists — and it fires once per entered agent
  * for fresh creation, resume, clear, and compaction alike.
  *

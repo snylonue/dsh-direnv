@@ -190,7 +190,7 @@ pnpm typecheck   # source AND tests
 pnpm test        # builds, then runs vitest
 ```
 
-The suite (132 tests) runs in layers:
+The suite (134 tests) runs in layers:
 
 - **pure core logic** — RC discovery, diff parsing, filtering, refusals, the
   cache stamp, the session-start context renderer, and the deny-store hash the
