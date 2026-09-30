@@ -2,6 +2,7 @@
   "name": "dsh-direnv",
   "version": "0.1.0",
   "description": "Workspace-aware direnv environment injection for DeepSeek Harness, with user-approved .envrc authorization",
+  "icon": "icon.svg",
   "type": "module",
   "license": "MIT",
   "engines": {
@@ -25,11 +26,15 @@
       "types": "./dist/core.d.ts",
       "default": "./dist/core.js"
     },
-    "./cordis.patch.yml": "./cordis.patch.yml"
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./locale/*.json": "./locale/*.json",
+    "./package.json": "./package.json"
   },
   "files": [
     "dist",
     "cordis.patch.yml",
+    "icon.svg",
+    "locale/*.json",
     "README.md",
     "LICENSE"
   ],

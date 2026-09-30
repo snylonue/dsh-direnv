@@ -213,3 +213,7 @@ workspace, `HOME`, and XDG root lives in one temp tree.
 ## License
 
 MIT.
+
+The plugin icon is the [direnv logo](https://github.com/direnv/direnv-logo)
+by Peter Waller, licensed under
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
