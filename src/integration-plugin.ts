@@ -12,6 +12,7 @@ import { type Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { installDirenvSessionContext } from './session-context.js'
 import { installDirenvShellAdapter } from './shell-adapter.js'
+import { installDirenvDirectAdapter } from './direct-adapter.js'
 
 export const name = 'direnv-integration'
 
@@ -24,6 +25,11 @@ export interface Config {}
 export const Config = z.object({}) as z<Config>
 
 export function apply(ctx: Context, _config: Config): void {
+  ctx.inject(['subprocess'], (subprocessCtx: Context) => {
+    const adapter = installDirenvDirectAdapter(subprocessCtx)
+    subprocessCtx.effect(() => () => adapter.dispose())
+  })
+
   ctx.effect(() => {
     const adapter = installDirenvShellAdapter(ctx)
     let sessionContext
