@@ -55,21 +55,19 @@ export function apply(ctx: Context): void {
   ctx.tools.register(defineTool({
     name: 'direnv_allow',
     description: [
-      'Ask the user to approve a workspace direnv file (.envrc or .env) so its environment variables load into future commands.',
-      'Call this only when a command result carries a [dsh-direnv] notice saying the workspace direnv environment is blocked, or when the user explicitly asks to approve one.',
-      'The user sees the file path, its SHA-256, and a preview of its contents, and must approve before anything is written.',
-      'Approving authorizes exactly the current file content: editing the file afterwards requires a new approval.',
-      'This tool never writes or edits the file itself.',
+      'Ask the user to approve a workspace direnv file (.envrc or .env) so its variables load into future commands.',
+      'Call it only when a command result carries a [dsh-direnv] blocked notice, or when the user explicitly asks.',
+      'The user sees the path, SHA-256, and a preview; approving covers exactly the current content, so editing the file afterwards needs a new approval.',
     ].join(' '),
     parameters: {
       path: {
         type: 'string',
         required: true,
-        description: 'Absolute path to the .envrc or .env file to approve, as named in the [dsh-direnv] notice.',
+        description: 'Absolute path of the .envrc or .env file named in the [dsh-direnv] notice.',
       },
       reason: {
         type: 'string',
-        description: 'One short sentence for the user explaining why this environment is needed, e.g. "the project needs its toolchain on PATH to run the build".',
+        description: 'One short sentence explaining why this environment is needed.',
       },
     },
     output: {
@@ -183,16 +181,14 @@ export function apply(ctx: Context): void {
   ctx.tools.register(defineTool({
     name: 'direnv_reload',
     description: [
-      'Re-resolve the workspace direnv environment now, and report what changed.',
-      'Each workspace is normally resolved once and cached; the cache already refreshes itself when the .envrc or direnv\'s own allow/deny state changes.',
-      'Call this after changing something direnv depends on that this plugin cannot observe, or to confirm what a workspace currently injects.',
-      'Omit directory to refresh every workspace that has been resolved so far.',
-      'This tool only reads: it never approves a file and needs no user approval.',
+      'Re-resolve a workspace direnv environment now and report what changed.',
+      'Use it after changing something direnv cannot observe, or to confirm what a workspace injects; the normal cache refreshes itself, and omitting directory refreshes every resolved workspace.',
+      'Reads only: it never approves a file.',
     ].join(' '),
     parameters: {
       directory: {
         type: 'string',
-        description: 'Absolute path of the directory to re-resolve. Defaults to the calling agent\'s workspace root.',
+        description: "Absolute path of the directory to re-resolve. Defaults to this agent's workspace root.",
       },
     },
     output: {
