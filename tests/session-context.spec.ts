@@ -36,6 +36,9 @@ afterAll(() => {
   for (const dir of roots.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
 
+/** Let the fire-and-forget `agent/created` listener's async probe settle. */
+const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
+
 /** Return one `direnv export json` outcome. */
 function exported(diff: Record<string, string | null>): ExportRun {
   return { code: 0, signal: null, stdout: JSON.stringify(diff), stderr: '', timedOut: false, spawnFailed: false }
@@ -162,7 +165,7 @@ describe('injectSessionContext', () => {
       probe: () => exported({ E2E_ONE: 'alpha', E2E_TWO: 'beta', DIRENV_DIR: '/ignored' }),
     })
     try {
-      injectSessionContext(app.ctx, app.agent)
+      await injectSessionContext(app.ctx, app.agent)
       expect(app.injected).toHaveLength(1)
       const message = app.injected[0]
       expect(message?.source).toMatchObject({ kind: SESSION_CONTEXT_PLUGIN, form: 'snapshot' })
@@ -179,7 +182,7 @@ describe('injectSessionContext', () => {
     const rcPath = join(scratch(), '.envrc')
     const app = await boot({ rcPath, probe: () => BLOCKED_RUN })
     try {
-      injectSessionContext(app.ctx, app.agent)
+      await injectSessionContext(app.ctx, app.agent)
       expect(app.injected).toHaveLength(1)
       const text = (app.injected[0]?.content[0] as { text: string }).text
       expect(text).toContain(`direnv_allow path=${rcPath}`)
@@ -193,9 +196,9 @@ describe('injectSessionContext', () => {
     const off = await boot({ rcPath: join(scratch(), '.envrc'), config: { sessionContext: false } })
     const disabled = await boot({ rcPath: join(scratch(), '.envrc'), config: { enabled: false } })
     try {
-      injectSessionContext(noRc.ctx, noRc.agent)
-      injectSessionContext(off.ctx, off.agent)
-      injectSessionContext(disabled.ctx, disabled.agent)
+      await injectSessionContext(noRc.ctx, noRc.agent)
+      await injectSessionContext(off.ctx, off.agent)
+      await injectSessionContext(disabled.ctx, disabled.agent)
       expect(noRc.injected).toHaveLength(0)
       expect(off.injected).toHaveLength(0)
       expect(disabled.injected).toHaveLength(0)
@@ -210,7 +213,7 @@ describe('injectSessionContext', () => {
     const app = await boot({ rcPath: join(scratch(), '.envrc'), probe: () => exported({ A: '1' }) })
     try {
       const homeless = { session: { header: {} }, inject: (message: UserMessage) => { app.injected.push(message) } } as unknown as Agent
-      injectSessionContext(app.ctx, homeless)
+      await injectSessionContext(app.ctx, homeless)
       expect(app.injected).toHaveLength(0)
     } finally {
       await app.dispose()
@@ -221,10 +224,10 @@ describe('injectSessionContext', () => {
     const ws = scratch()
     const app = await boot({ rcPath: join(ws, '.envrc'), probe: () => exported({ A: '1' }) })
     try {
-      injectSessionContext(app.ctx, app.agent)
+      await injectSessionContext(app.ctx, app.agent)
       expect(app.probeCalls()).toBe(1)
       // A later resolution through the same provider must reuse the warmed entry.
-      expect(app.ctx.direnv.statusFor(app.workspace).kind).toBe('injected')
+      expect((await app.ctx.direnv.statusFor(app.workspace)).kind).toBe('injected')
       expect(app.probeCalls()).toBe(1)
     } finally {
       await app.dispose()
@@ -236,9 +239,11 @@ describe('injectSessionContext', () => {
     try {
       const listener = installDirenvSessionContext(app.ctx)
       emitAgentEvent(app.ctx, app.agent, 'agent/created', { source: 'startup' })
+      await flush()
       expect(app.injected).toHaveLength(1)
       listener.dispose()
       emitAgentEvent(app.ctx, app.agent, 'agent/created', { source: 'resume' })
+      await flush()
       expect(app.injected).toHaveLength(1)
     } finally {
       await app.dispose()

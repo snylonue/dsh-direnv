@@ -264,15 +264,29 @@ async function boot(box: Sandbox, overrides: Partial<DirenvConfig> = {}, runExpo
 const describeReal = requireRealProcesses('real-direnv tests') ? describe : describe.skip
 
 describeReal('direnv injection (real direnv)', () => {
-  it('injects an allowed .envrc into the resolved shell spec', async () => {
+  it('injects an allowed .envrc into the executed shell spec', async () => {
     const box = sandbox()
     writeRc(box, '.', 'export E2E_ONE=alpha\nexport E2E_TWO="a b"\n')
     const app = await boot(box)
     try {
-      app.shell.run(app.shell.resolve({ command: 'echo hi' }))
+      await app.shell.run(app.shell.resolve({ command: 'echo hi' }))
       const env = app.shell.last().env ?? {}
       expect(env.E2E_ONE).toBe('alpha')
       expect(env.E2E_TWO).toBe('a b')
+    } finally { await app.dispose() }
+  })
+
+  it('injects on execute only, never on the synchronous resolve', async () => {
+    const box = sandbox()
+    writeRc(box, '.', 'export ONLY_EXEC=1\n')
+    const app = await boot(box)
+    try {
+      // `resolve` is synchronous by contract and stays unwrapped; the async
+      // probe runs in `execute`, so the env lands on the spec the executor
+      // receives rather than on one a caller merely prepared.
+      expect(app.shell.resolve({ command: 'true' }).env).toBeUndefined()
+      await app.shell.run(app.shell.resolve({ command: 'true' }))
+      expect(app.shell.last().env?.ONLY_EXEC).toBe('1')
     } finally { await app.dispose() }
   })
 
@@ -282,7 +296,7 @@ describeReal('direnv injection (real direnv)', () => {
     const app = await boot(box)
     try {
       const command = 'echo "quoted \'text\'" && ls -la | wc -l'
-      app.shell.run(app.shell.resolve({ command }))
+      await app.shell.run(app.shell.resolve({ command }))
       expect(app.shell.last().command).toBe(command)
     } finally { await app.dispose() }
   })
@@ -291,7 +305,7 @@ describeReal('direnv injection (real direnv)', () => {
     const box = sandbox()
     const app = await boot(box)
     try {
-      app.shell.run(app.shell.resolve({ command: 'true' }))
+      await app.shell.run(app.shell.resolve({ command: 'true' }))
       expect(app.shell.last().env).toBeUndefined()
     } finally { await app.dispose() }
   })
@@ -331,7 +345,7 @@ describeReal('direnv injection (real direnv)', () => {
     ].join('\n'))
     const app = await boot(box)
     try {
-      app.shell.run(app.shell.resolve({ command: 'true' }))
+      await app.shell.run(app.shell.resolve({ command: 'true' }))
       const env = app.shell.last().env ?? {}
       expect(env.LEGITIMATE).toBe('kept')
       expect('DSH_HOME' in env).toBe(false)
@@ -345,7 +359,7 @@ describeReal('direnv injection (real direnv)', () => {
     writeRc(box, '.', 'export KEPT=v\n')
     const app = await boot(box)
     try {
-      app.shell.run(app.shell.resolve({ command: 'true' }))
+      await app.shell.run(app.shell.resolve({ command: 'true' }))
       const env = app.shell.last().env ?? {}
       expect(env.KEPT).toBe('v')
       for (const name of Object.keys(env)) expect(name.startsWith('DIRENV_')).toBe(false)
@@ -357,7 +371,7 @@ describeReal('direnv injection (real direnv)', () => {
     writeRc(box, '.', 'export PATH="$PATH:/opt/e2e/bin"\nunset E2E_REMOVE\n')
     const app = await boot(box)
     try {
-      app.shell.run(app.shell.resolve({ command: 'true' }))
+      await app.shell.run(app.shell.resolve({ command: 'true' }))
       const env = app.shell.last().env ?? {}
       expect(env.PATH?.endsWith('/opt/e2e/bin')).toBe(true)
       expect('E2E_REMOVE' in env).toBe(false)
@@ -369,14 +383,14 @@ describeReal('direnv injection (real direnv)', () => {
     const rc = writeRc(box, '.', 'export V=v1\n')
     const app = await boot(box)
     try {
-      app.shell.run(app.shell.resolve({ command: 'true' }))
+      await app.shell.run(app.shell.resolve({ command: 'true' }))
       expect(app.shell.last().env?.V).toBe('v1')
       writeFileSync(rc, 'export V=v2\n')
       const blocked = await (await app.ctx.shell.execute(app.shell.resolve({ command: 'true' }))).result()
       expect(app.shell.last().env).toBeUndefined()
       expect(blocked.stderr.text).toContain('[dsh-direnv]')
       allowWithRealDirenv(box, rc)
-      app.shell.run(app.shell.resolve({ command: 'true' }))
+      await app.shell.run(app.shell.resolve({ command: 'true' }))
       expect(app.shell.last().env?.V).toBe('v2')
     } finally { await app.dispose() }
   })
@@ -388,11 +402,11 @@ describeReal('direnv injection (real direnv)', () => {
     const app = await boot(box)
     try {
       const nested = join(box.workspace, 'packages', 'api')
-      app.shell.run(app.shell.resolve({ command: 'true', workdir: nested }))
+      await app.shell.run(app.shell.resolve({ command: 'true', workdir: nested }))
       const nestedEnv = app.shell.last().env ?? {}
       expect(nestedEnv.PKG_VAR).toBe('api')
       expect('ROOT_VAR' in nestedEnv).toBe(false)
-      app.shell.run(app.shell.resolve({ command: 'true' }))
+      await app.shell.run(app.shell.resolve({ command: 'true' }))
       const rootEnv = app.shell.last().env ?? {}
       expect(rootEnv.ROOT_VAR).toBe('root')
       expect('PKG_VAR' in rootEnv).toBe(false)
@@ -405,7 +419,7 @@ describeReal('direnv injection (real direnv)', () => {
     writeRc(box, 'packages/api', 'export PKG_VAR=api\n')
     const app = await boot(box, { followWorkdir: false })
     try {
-      app.shell.run(app.shell.resolve({ command: 'true', workdir: join(box.workspace, 'packages', 'api') }))
+      await app.shell.run(app.shell.resolve({ command: 'true', workdir: join(box.workspace, 'packages', 'api') }))
       const env = app.shell.last().env ?? {}
       expect(env.ROOT_VAR).toBe('root')
       expect('PKG_VAR' in env).toBe(false)
@@ -418,7 +432,7 @@ describeReal('direnv injection (real direnv)', () => {
     const app = await boot(box)
     try {
       currentAgent = undefined
-      app.shell.run(app.shell.resolve({ command: 'true' }))
+      await app.shell.run(app.shell.resolve({ command: 'true' }))
       expect(app.shell.last().env).toBeUndefined()
     } finally { await app.dispose() }
   })
@@ -429,7 +443,7 @@ describeReal('direnv injection (real direnv)', () => {
     const app = await boot(box)
     try {
       currentAgent = { session: { header: {} } }
-      app.shell.run(app.shell.resolve({ command: 'true' }))
+      await app.shell.run(app.shell.resolve({ command: 'true' }))
       expect(app.shell.last().env).toBeUndefined()
     } finally { await app.dispose() }
   })
@@ -439,7 +453,7 @@ describeReal('direnv injection (real direnv)', () => {
     writeRc(box, '.', 'export X=1\n')
     const app = await boot(box, { enabled: false })
     try {
-      app.shell.run(app.shell.resolve({ command: 'true' }))
+      await app.shell.run(app.shell.resolve({ command: 'true' }))
       expect(app.shell.last().env).toBeUndefined()
     } finally { await app.dispose() }
   })
@@ -449,7 +463,7 @@ describeReal('direnv injection (real direnv)', () => {
     writeRc(box, '.', 'export CONTESTED=from-direnv\nexport ONLY_DIRENV=d\n')
     const app = await boot(box)
     try {
-      app.shell.run(app.shell.resolve({ command: 'true', env: { CONTESTED: 'from-caller' } }))
+      await app.shell.run(app.shell.resolve({ command: 'true', env: { CONTESTED: 'from-caller' } }))
       const env = app.shell.last().env ?? {}
       expect(env.CONTESTED).toBe('from-caller')
       expect(env.ONLY_DIRENV).toBe('d')
@@ -461,10 +475,10 @@ describeReal('direnv injection (real direnv)', () => {
     const rc = writeRc(box, '.', 'export X=1\n')
     const app = await boot(box)
     try {
-      app.shell.run(app.shell.resolve({ command: 'true' }))
+      await app.shell.run(app.shell.resolve({ command: 'true' }))
       expect(app.shell.last().env?.X).toBe('1')
       rmSync(rc)
-      app.shell.run(app.shell.resolve({ command: 'true' }))
+      await app.shell.run(app.shell.resolve({ command: 'true' }))
       expect(app.shell.last().env).toBeUndefined()
     } finally { await app.dispose() }
   })

@@ -148,7 +148,7 @@ export function apply(ctx: Context): void {
           return { outcome: 'unavailable' as const, path, detail: `dsh-direnv: no approval answerer was reachable, so ${path} was not approved` }
       }
 
-      const approved = ctx.direnv.approve(path, workspace)
+      const approved = await ctx.direnv.approve(path, workspace)
       if (!approved.ok) {
         return { outcome: 'refused' as const, path, detail: `dsh-direnv: the user approved, but direnv refused the write: ${approved.reason}` }
       }
@@ -157,7 +157,7 @@ export function apply(ctx: Context): void {
       // runs in a nested package. Count only names that will be set: a `.envrc`'s
       // `unset` is not an injected variable.
       const approvedDir = dirname(path)
-      const after = ctx.direnv.statusFor(approvedDir)
+      const after = await ctx.direnv.statusFor(approvedDir)
       const variables = envNames(after.env).length
       return {
         outcome: 'approved' as const,
@@ -167,7 +167,7 @@ export function apply(ctx: Context): void {
         detail: [
           `dsh-direnv: approved ${path}.`,
           `The next command in this workspace receives ${variables} injected variable${variables === 1 ? '' : 's'}.`,
-          ...after.kind === 'injected' ? [] : [`Current state: ${ctx.direnv.describe(approvedDir)}.`],
+          ...after.kind === 'injected' ? [] : [`Current state: ${await ctx.direnv.describe(approvedDir)}.`],
         ].join(' '),
       }
     },
@@ -213,7 +213,7 @@ export function apply(ctx: Context): void {
       if (requested === undefined && target === undefined) {
         return { reloaded: 0, detail: 'dsh-direnv: this call has no workspace to reload; pass an explicit directory.' }
       }
-      const report = ctx.direnv.reload(target)
+      const report = await ctx.direnv.reload(target)
       if (report.reloaded === 0) {
         return {
           reloaded: 0,

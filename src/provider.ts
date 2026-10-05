@@ -10,15 +10,15 @@
  * into the child environment, so no workspace-controlled byte ever reaches a
  * command line.
  *
- * There is deliberately NO status cache. Native direnv re-evaluates and
- * re-checks its authorization hash on every call; memoizing that result would
- * reintroduce exactly the staleness this design exists to avoid. The probe
- * costs roughly 35 ms for an allowed `.envrc` and a few milliseconds when
- * direnv refuses early.
+ * Resolutions are cached per directory, but only behind a stamp over everything
+ * that can change the answer, so a stale result is never served. Probes are
+ * asynchronous: a heavy `.envrc` (Nix, a network fetch) never blocks the
+ * harness's event loop, and concurrent commands in one unchanged directory
+ * share a single in-flight probe. An allowed `.envrc` typically costs tens of
+ * milliseconds; a refusal is faster still.
  *
  * @module dsh-direnv
  */
-import { spawnSync } from 'node:child_process'
 import { dirname, isAbsolute, resolve as resolvePath } from 'node:path'
 import { Service, type Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
@@ -33,6 +33,7 @@ import {
   isExistingDirectory,
   refuseAllow,
   resolveStatus,
+  runChild,
   runExport,
   type DirenvConfig,
   type DirenvRuntime,
@@ -89,8 +90,8 @@ export interface AllowRun {
 
 /** Constructor-only seams for deterministic tests. */
 export interface DirenvServiceRuntime extends DirenvRuntime {
-  /** Injectable `direnv allow` runner; production spawns the real executable. */
-  runAllow?: (rcPath: string, config: ExportConfig) => AllowRun
+  /** Injectable `direnv allow` runner; production spawns the real executable asynchronously. */
+  runAllow?: (rcPath: string, config: ExportConfig) => AllowRun | Promise<AllowRun>
 }
 
 export default class DirenvService extends Service {
@@ -162,6 +163,9 @@ export default class DirenvService extends Service {
    */
   private readonly cache = new Map<string, { status: DirenvStatus; stamp: string }>()
 
+  /** Probes in flight, keyed by directory plus stamp, so concurrent commands share one. */
+  private readonly inflight = new Map<string, Promise<DirenvStatus>>()
+
   /**
    * The environment every direnv child inherits. Read from the runtime seam so
    * the probe and the cache stamp can never disagree about which allow/deny
@@ -180,19 +184,33 @@ export default class DirenvService extends Service {
     return cacheStamp(find(probeDir), this.direnvEnv)
   }
 
-  /** Resolve one directory's direnv state, consulting the cache when enabled. */
-  statusFor(probeDir: string): DirenvStatus {
+  /**
+   * Resolve one directory's direnv state, consulting the cache when enabled.
+   * The probe is asynchronous: a heavy `.envrc` never blocks the harness's
+   * event loop, and concurrent commands in one unchanged directory share a
+   * single in-flight probe.
+   */
+  async statusFor(probeDir: string): Promise<DirenvStatus> {
     if (!this.config.enabled) return { kind: 'disabled', env: {}, dropped: [] }
     const { env, ...runtime } = this.runtime
     const probeConfig: ExportConfig = { ...this.config, ...env === undefined ? {} : { env } }
-    const probe = (): DirenvStatus => resolveStatus(probeDir, probeConfig, runtime)
-    if (!this.config.cache) return probe()
+    if (!this.config.cache) return resolveStatus(probeDir, probeConfig, runtime)
 
     const stamp = this.stampFor(probeDir)
     const hit = this.cache.get(probeDir)
     if (hit !== undefined && hit.stamp === stamp) return hit.status
-    const status = probe()
-    this.cache.set(probeDir, { status, stamp })
+
+    const key = `${probeDir}\u0000${stamp}`
+    const pending = this.inflight.get(key) ?? resolveStatus(probeDir, probeConfig, runtime)
+    this.inflight.set(key, pending)
+    let status: DirenvStatus
+    try {
+      status = await pending
+    } finally {
+      if (this.inflight.get(key) === pending) this.inflight.delete(key)
+    }
+    // A concurrent probe or an external change may have moved the stamp on.
+    if (this.stampFor(probeDir) === stamp) this.cache.set(probeDir, { status, stamp })
     return status
   }
 
@@ -211,7 +229,7 @@ export default class DirenvService extends Service {
    * cache, and report what changed. The stamp is recorded so a following
    * command reuses this result rather than probing again.
    */
-  reload(probeDir?: string): ReloadReport {
+  async reload(probeDir?: string): Promise<ReloadReport> {
     // Snapshot the keys first: resolving a directory re-inserts it, and the
     // "reload everything" form must not chase its own insertions.
     const targets = probeDir === undefined ? [...this.cache.keys()] : [probeDir]
@@ -220,7 +238,7 @@ export default class DirenvService extends Service {
       const before = this.cache.get(dir)?.status
       const beforeNames = before === undefined ? undefined : envNames(before.env)
       this.invalidate(dir)
-      const after = this.statusFor(dir)
+      const after = await this.statusFor(dir)
       const afterNames = envNames(after.env)
       changed.push({
         directory: dir,
@@ -242,8 +260,8 @@ export default class DirenvService extends Service {
    * The environment to merge into one shell call, plus the actionable notice
    * to append when the workspace could not be injected.
    */
-  forWorkspace(workspace: string): { env: InjectableEnv; status: DirenvStatus; notice?: string } {
-    const status = this.statusFor(workspace)
+  async forWorkspace(workspace: string): Promise<{ env: InjectableEnv; status: DirenvStatus; notice?: string }> {
+    const status = await this.statusFor(workspace)
     const notice = this.config.notifyOnBlocked ? blockedNotice(status, workspace) : undefined
     return {
       env: status.env,
@@ -253,8 +271,8 @@ export default class DirenvService extends Service {
   }
 
   /** A log-safe one-line description of one workspace's state. */
-  describe(workspace: string): string {
-    return describeStatus(this.statusFor(workspace))
+  async describe(workspace: string): Promise<string> {
+    return describeStatus(await this.statusFor(workspace))
   }
 
   /** The refusal reason for approving `rcPath` on behalf of `workspace`. */
@@ -268,11 +286,11 @@ export default class DirenvService extends Service {
    * obtained explicit user consent first; this method only performs the
    * approval and reports direnv's own verdict.
    */
-  approve(rcPath: string, workspace: string | undefined): { ok: true } | { ok: false; reason: string } {
+  async approve(rcPath: string, workspace: string | undefined): Promise<{ ok: true } | { ok: false; reason: string }> {
     const refusal = this.refusalFor(rcPath, workspace)
     if (refusal !== undefined) return { ok: false, reason: refusal }
     const run = this.runtime.runAllow ?? runAllow
-    const result = run(rcPath, { ...this.config, env: this.direnvEnv })
+    const result = await run(rcPath, { ...this.config, env: this.direnvEnv })
     if (result.code !== 0) {
       const detail = firstLine(result.stderr)
       return {
@@ -310,15 +328,13 @@ export function firstLine(text: string): string {
   return line.length > 300 ? `${line.slice(0, 297)}...` : line
 }
 
-/** Run `direnv allow <rcPath>` with a fixed argv and no shell. */
-export function runAllow(rcPath: string, config: ExportConfig): AllowRun {
-  const result = spawnSync(config.executable, ['allow', rcPath], {
+/** Run `direnv allow <rcPath>` with a fixed argv and no shell, without blocking. */
+export async function runAllow(rcPath: string, config: ExportConfig): Promise<AllowRun> {
+  const result = await runChild(config.executable, ['allow', rcPath], {
+    cwd: process.cwd(),
     env: config.env ?? process.env,
-    timeout: config.probeTimeoutMs,
-    killSignal: 'SIGKILL',
-    maxBuffer: 1024 * 1024,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
+    timeoutMs: config.probeTimeoutMs,
+    maxBytes: 1024 * 1024,
   })
-  return { code: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' }
+  return { code: result.code, stdout: result.stdout, stderr: result.stderr }
 }

@@ -44,7 +44,7 @@ export interface DirenvSessionContextHandle {
  * @param ctx - composition context whose `direnv` service resolves the state.
  * @param agent - the agent whose session just started.
  */
-export function injectSessionContext(ctx: Context, agent: Agent): void {
+export async function injectSessionContext(ctx: Context, agent: Agent): Promise<void> {
   try {
     if (!ctx.direnv.enabled || !ctx.direnv.settings.sessionContext) return
     const workspace = ctx.direnv.workspaceFor(agent)
@@ -57,7 +57,7 @@ export function injectSessionContext(ctx: Context, agent: Agent): void {
 
     // Resolving answers the context AND warms the per-directory cache, so the
     // session's first command reuses this probe.
-    const status = ctx.direnv.statusFor(probeDir)
+    const status = await ctx.direnv.statusFor(probeDir)
     const text = sessionContextText(status, probeDir)
     if (text === undefined) return
 
@@ -96,7 +96,9 @@ export function injectSessionContext(ctx: Context, agent: Agent): void {
  */
 export function installDirenvSessionContext(ctx: Context): DirenvSessionContextHandle {
   const off = ctx.on('agent/created', ({ agent }) => {
-    injectSessionContext(ctx, agent)
+    // Best-effort: the helper contains its own failures, so the promise it
+    // returns can never reject into the lifecycle.
+    void injectSessionContext(ctx, agent)
     return undefined
   })
   return { dispose: () => void off() }

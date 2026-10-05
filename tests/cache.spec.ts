@@ -92,9 +92,9 @@ describeReal('per-workspace cache', () => {
     writeRc(box, 'export CACHED=yes\n')
     const app = await boot(box)
     try {
-      expect(envNames(app.service.statusFor(box.ws).env)).toEqual(['CACHED'])
+      expect(envNames((await app.service.statusFor(box.ws)).env)).toEqual(['CACHED'])
       expect(app.probes).toBe(1)
-      for (let i = 0; i < 5; i += 1) app.service.statusFor(box.ws)
+      for (let i = 0; i < 5; i += 1) await app.service.statusFor(box.ws)
       expect(app.probes).toBe(1)
     } finally { await app.dispose() }
   })
@@ -109,8 +109,8 @@ describeReal('per-workspace cache', () => {
     spawnSync('direnv', ['allow', subRc], { env: box.env })
     const app = await boot(box)
     try {
-      expect(envNames(app.service.statusFor(box.ws).env)).toEqual(['ROOT'])
-      expect(envNames(app.service.statusFor(sub).env)).toEqual(['SUB'])
+      expect(envNames((await app.service.statusFor(box.ws)).env)).toEqual(['ROOT'])
+      expect(envNames((await app.service.statusFor(sub)).env)).toEqual(['SUB'])
       expect(app.probes).toBe(2)
     } finally { await app.dispose() }
   })
@@ -120,15 +120,15 @@ describeReal('per-workspace cache', () => {
     const rc = writeRc(box, 'export V=v1\n')
     const app = await boot(box)
     try {
-      expect(app.service.statusFor(box.ws).env.V).toBe('v1')
+      expect((await app.service.statusFor(box.ws)).env.V).toBe('v1')
       expect(app.probes).toBe(1)
       writeFileSync(rc, 'export V=v2\n')
       // Content changed, so the authorization hash no longer matches: the
       // cache must not serve the old value.
-      expect(app.service.statusFor(box.ws).kind).toBe('blocked')
+      expect((await app.service.statusFor(box.ws)).kind).toBe('blocked')
       expect(app.probes).toBe(2)
       spawnSync('direnv', ['allow', rc], { env: box.env })
-      expect(app.service.statusFor(box.ws).env.V).toBe('v2')
+      expect((await app.service.statusFor(box.ws)).env.V).toBe('v2')
     } finally { await app.dispose() }
   })
 
@@ -139,12 +139,12 @@ describeReal('per-workspace cache', () => {
     const app = await boot(box)
     try {
       // Unapproved at first: blocked, and cached as such.
-      expect(app.service.statusFor(box.ws).kind).toBe('blocked')
+      expect((await app.service.statusFor(box.ws)).kind).toBe('blocked')
       const afterFirst = app.probes
       // An approval performed entirely outside the plugin (the user in a
       // terminal) rewrites direnv's allow store, which the stamp covers.
       spawnSync('direnv', ['allow', rc], { env: box.env })
-      expect(app.service.statusFor(box.ws).kind).toBe('injected')
+      expect((await app.service.statusFor(box.ws)).kind).toBe('injected')
       expect(app.probes).toBeGreaterThan(afterFirst)
     } finally { await app.dispose() }
   })
@@ -154,9 +154,9 @@ describeReal('per-workspace cache', () => {
     const rc = writeRc(box, 'export DENIED=1\n')
     const app = await boot(box)
     try {
-      expect(app.service.statusFor(box.ws).kind).toBe('injected')
+      expect((await app.service.statusFor(box.ws)).kind).toBe('injected')
       spawnSync('direnv', ['deny', rc], { env: box.env })
-      const after = app.service.statusFor(box.ws)
+      const after = await app.service.statusFor(box.ws)
       expect(after.kind === 'injected').toBe(false)
       expect(envNames(after.env)).not.toContain('DENIED')
     } finally { await app.dispose() }
@@ -167,9 +167,9 @@ describeReal('per-workspace cache', () => {
     const rc = writeRc(box, 'export GONE=1\n')
     const app = await boot(box)
     try {
-      expect(app.service.statusFor(box.ws).env.GONE).toBe('1')
+      expect((await app.service.statusFor(box.ws)).env.GONE).toBe('1')
       rmSync(rc)
-      expect(app.service.statusFor(box.ws).kind).toBe('no-rc')
+      expect((await app.service.statusFor(box.ws)).kind).toBe('no-rc')
     } finally { await app.dispose() }
   })
 
@@ -178,7 +178,7 @@ describeReal('per-workspace cache', () => {
     writeRc(box, 'export V=1\n')
     const app = await boot(box, { cache: false })
     try {
-      for (let i = 0; i < 3; i += 1) app.service.statusFor(box.ws)
+      for (let i = 0; i < 3; i += 1) await app.service.statusFor(box.ws)
       expect(app.probes).toBe(3)
     } finally { await app.dispose() }
   })
@@ -190,9 +190,9 @@ describeReal('manual reload', () => {
     writeRc(box, 'export A=1\nexport B=2\n')
     const app = await boot(box)
     try {
-      app.service.statusFor(box.ws)
+      await app.service.statusFor(box.ws)
       const before = app.probes
-      const report = app.service.reload(box.ws)
+      const report = await app.service.reload(box.ws)
       expect(report.reloaded).toBe(1)
       expect(report.changed).toHaveLength(1)
       expect(report.changed[0]?.variables).toBe(2)
@@ -206,10 +206,10 @@ describeReal('manual reload', () => {
     const rc = writeRc(box, 'export KEEP=1\nexport DROP=2\n')
     const app = await boot(box)
     try {
-      app.service.statusFor(box.ws)
+      await app.service.statusFor(box.ws)
       writeFileSync(rc, 'export KEEP=1\nexport FRESH=3\n')
       spawnSync('direnv', ['allow', rc], { env: box.env })
-      const report = app.service.reload(box.ws)
+      const report = await app.service.reload(box.ws)
       expect(report.changed[0]?.added).toEqual(['FRESH'])
       expect(report.changed[0]?.removed).toEqual(['DROP'])
     } finally { await app.dispose() }
@@ -225,9 +225,9 @@ describeReal('manual reload', () => {
     spawnSync('direnv', ['allow', subRc], { env: box.env })
     const app = await boot(box)
     try {
-      app.service.statusFor(box.ws)
-      app.service.statusFor(sub)
-      const report = app.service.reload()
+      await app.service.statusFor(box.ws)
+      await app.service.statusFor(sub)
+      const report = await app.service.reload()
       expect(report.reloaded).toBe(2)
       expect(report.changed.map((c) => c.directory).sort()).toEqual([box.ws, sub].sort())
     } finally { await app.dispose() }
@@ -238,7 +238,7 @@ describeReal('manual reload', () => {
     writeRc(box, 'export V=1\n')
     const app = await boot(box)
     try {
-      expect(app.service.reload().reloaded).toBe(0)
+      expect((await app.service.reload()).reloaded).toBe(0)
     } finally { await app.dispose() }
   })
 
@@ -247,11 +247,11 @@ describeReal('manual reload', () => {
     writeRc(box, 'export V=1\n')
     const app = await boot(box)
     try {
-      app.service.statusFor(box.ws)
+      await app.service.statusFor(box.ws)
       // Simulate an unobservable dependency: clear the cache by hand, which is
       // exactly what a manual reload does, and confirm the fresh read.
       app.service.invalidate(box.ws)
-      const report = app.service.reload(box.ws)
+      const report = await app.service.reload(box.ws)
       expect(report.changed[0]?.kind).toBe('injected')
     } finally { await app.dispose() }
   })

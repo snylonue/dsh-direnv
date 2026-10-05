@@ -85,6 +85,11 @@ everything that can change the answer:
   run in your own terminal is observed, even though it changes no file the
   plugin could otherwise see.
 
+Probes are **asynchronous**: the `direnv export` runs on its own process while
+the harness stays responsive, so a heavy `.envrc` (Nix, a network fetch) delays
+only the command that needs it. Concurrent commands in one unchanged directory
+share a single in-flight probe.
+
 When that is not enough — a dependency of the `.envrc` you changed, an
 environment direnv reads that this plugin cannot observe — call the
 `direnv_reload` tool:

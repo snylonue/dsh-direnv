@@ -1,7 +1,7 @@
 /**
  * Pure direnv projections for the dsh-direnv plugin.
  *
- * This module is framework-free and side-effect free: it validates inputs,
+ * This module is free of host services and side-effect free: it validates inputs,
  * interprets one `direnv export json` run, filters the resulting diff into a
  * safe environment map, and locates the `.envrc` that governs a workspace.
  * No shell string is ever built and no command is ever wrapped — the plugin
@@ -10,23 +10,25 @@
  *
  * @module dsh-direnv/core
  */
-import { spawnSync } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { closeSync, openSync, readSync, statSync } from 'node:fs'
 // resolvePath is used by the deny-store hash, which mirrors direnv's own.
 import { dirname, isAbsolute, join, parse, resolve as resolvePath } from 'node:path'
 import { realpathSync } from 'node:fs'
+import { DSH_ENV_PREFIX } from '@deepseek-ai/dsh-shell'
 
 /** Environment variable names this plugin is willing to inject. */
 export const SAFE_ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
 
 /**
- * The harness-managed namespace. A workspace `.envrc` must never be able to
- * supply a `DSH_*` fact: the managed snapshot is authoritative, and an
- * unmanaged `DSH_*` name would otherwise read as a harness fact to the model.
- * Every such name is dropped from the injected diff.
+ * The harness-managed namespace, taken from the harness's own declaration so
+ * it can never drift from what the shell seam actually owns. A workspace
+ * `.envrc` must never be able to supply a `DSH_*` fact: the managed snapshot is
+ * authoritative, and an unmanaged `DSH_*` name would otherwise read as a
+ * harness fact to the model. Every such name is dropped from the injected diff.
  */
-export const MANAGED_ENV_PREFIX = 'DSH_'
+export const MANAGED_ENV_PREFIX = DSH_ENV_PREFIX
 
 /** The config file names native direnv looks for, nearest-first. */
 export const RC_NAMES = ['.envrc', '.env'] as const
@@ -301,33 +303,95 @@ export interface ExportConfig extends DirenvConfig {
 }
 
 /** Injectable probe seam so activation and status are testable without a host. */
-export type ExportRunner = (workspace: string, config: ExportConfig) => ExportRun
+export type ExportRunner = (workspace: string, config: ExportConfig) => ExportRun | Promise<ExportRun>
 
 /**
- * Run `direnv export json` in `workspace`. `shell` is never used: the argv is
- * fixed and the directory travels as `cwd`, so no workspace-controlled byte
- * ever reaches a command line. `export json` prints only the DIFF direnv would
- * apply, which is exactly the injection this plugin performs.
+ * Run one fixed-argv child without blocking the event loop. `shell` is never
+ * used: the executable and argv are the caller's, and the directory travels as
+ * `cwd`, so no workspace-controlled byte ever reaches a command line.
+ *
+ * Mirrors the shape `spawnSync` produced — exit code, signal, collected
+ * streams, and the timeout/spawn-failure classifications — while yielding the
+ * thread to the rest of the harness for the child's whole lifetime. Output
+ * beyond `maxBytes` kills the child and reports a spawn failure, matching
+ * `spawnSync`'s `maxBuffer` behavior.
+ *
+ * @param executable - bare PATH name or absolute path.
+ * @param args - argv entries, passed verbatim.
+ * @param options - cwd, child environment, wall-clock budget, and output cap.
+ * @returns the child outcome; never rejects.
  */
-export const runExport: ExportRunner = (workspace, config: ExportConfig) => {
+export function runChild(
+  executable: string,
+  args: readonly string[],
+  options: { cwd: string; env: NodeJS.ProcessEnv; timeoutMs: number; maxBytes: number },
+): Promise<ExportRun> {
+  return new Promise((resolve) => {
+    let settled = false
+    let timedOut = false
+    let bytes = 0
+    let stdout = ''
+    let stderr = ''
+    let child: ReturnType<typeof spawn>
+    const finish = (outcome: ExportRun): void => {
+      if (settled) return
+      settled = true
+      if (timer !== undefined) clearTimeout(timer)
+      resolve(outcome)
+    }
+    try {
+      child = spawn(executable, [...args], {
+        cwd: options.cwd,
+        env: options.env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+      })
+    } catch {
+      resolve({ code: null, signal: null, stdout: '', stderr: '', timedOut: false, spawnFailed: true })
+      return
+    }
+    const timer = setTimeout(() => {
+      timedOut = true
+      child.kill('SIGKILL')
+    }, options.timeoutMs)
+    const collect = (stream: typeof child.stdout, append: (text: string) => void): void => {
+      if (stream === null) return
+      stream.setEncoding('utf8')
+      stream.on('data', (chunk: string) => {
+        bytes += Buffer.byteLength(chunk)
+        if (bytes > options.maxBytes) {
+          child.kill('SIGKILL')
+          return
+        }
+        append(chunk)
+      })
+    }
+    collect(child.stdout, (text) => { stdout += text })
+    collect(child.stderr, (text) => { stderr += text })
+    child.on('error', () => finish({ code: null, signal: null, stdout, stderr, timedOut: false, spawnFailed: true }))
+    child.on('close', (code, signal) => finish({
+      code,
+      signal,
+      stdout,
+      stderr,
+      timedOut,
+      spawnFailed: bytes > options.maxBytes,
+    }))
+  })
+}
+
+/**
+ * Run `direnv export json` in `workspace`. `export json` prints the DIFF direnv
+ * would apply, which is exactly the injection this plugin performs.
+ */
+export const runExport: ExportRunner = async (workspace, config: ExportConfig) => {
   assertWorkspace(workspace)
-  const result = spawnSync(config.executable, ['export', 'json'], {
+  return runChild(config.executable, ['export', 'json'], {
     cwd: workspace,
     env: config.env ?? process.env,
-    timeout: config.probeTimeoutMs,
-    killSignal: 'SIGKILL',
-    maxBuffer: 8 * 1024 * 1024,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
+    timeoutMs: config.probeTimeoutMs,
+    maxBytes: 8 * 1024 * 1024,
   })
-  return {
-    code: result.status,
-    signal: result.signal,
-    stdout: result.stdout ?? '',
-    stderr: result.stderr ?? '',
-    timedOut: result.error !== undefined && (result.error as NodeJS.ErrnoException).code === 'ETIMEDOUT',
-    spawnFailed: result.error !== undefined && (result.error as NodeJS.ErrnoException).code !== 'ETIMEDOUT',
-  }
 }
 
 /** One parsed diff entry: a value to set, or `null` meaning "unset me". */
@@ -480,15 +544,15 @@ export interface DirenvRuntime {
  * changed since it was allowed, is refused by direnv itself and this function
  * reports `blocked` without ever evaluating the file.
  */
-export function resolveStatus(
+export async function resolveStatus(
   workspace: string,
   config: ExportConfig,
   runtime: DirenvRuntime = {},
-): DirenvStatus {
+): Promise<DirenvStatus> {
   if (!config.enabled) return { kind: 'disabled', env: {}, dropped: [] }
   const find = runtime.findRcPath ?? findRcPath
   const rcPath = find(workspace)
-  const run = (runtime.runExport ?? runExport)(workspace, config)
+  const run = await (runtime.runExport ?? runExport)(workspace, config)
 
   if (run.spawnFailed) {
     return { kind: 'error', env: {}, dropped: [], detail: 'direnv could not be started' }

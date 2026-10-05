@@ -2,19 +2,19 @@
  * Shell adapter: merges one workspace's native direnv environment into every
  * agent-owned shell call, and tells the model when it could not.
  *
- * Two links are installed on the concrete `ctx.shell` target:
+ * ONE link is installed on the concrete `ctx.shell` target, on `execute`:
  *
- * - `resolve` computes the workspace environment, merges it into
- *   `request.env`, and tags the returned spec with any "could not inject"
- *   notice;
- * - `execute` looks that notice up by spec and surfaces it to the caller: on
- *   the foreground `result()` stderr, on the consuming `readOutput()` delta,
- *   and on the non-consuming `observed.stderr` reader the job registry pumps
- *   for background output.
+ * - `execute` is the seam's asynchronous half, so the direnv probe runs off
+ *   the event loop and its environment is merged into the already-resolved
+ *   spec immediately before the provider spawns. The "could not inject" notice
+ *   is produced in the same step and wrapped onto the returned handle, so
+ *   nothing is ever written onto a spec that belongs to the caller.
  *
- * The notice travels on the spec object itself under an enumerable symbol key,
- * because callers may clone a spec (`{...spec, signal}`, as the bash tool does
- * for background jobs) before handing it to the executor.
+ * `resolve` is deliberately NOT wrapped: it is synchronous by contract, and
+ * blocking it on a `direnv export` (a heavy `.envrc` can take seconds) would
+ * stall the harness's event loop. Every model-facing shell call reaches
+ * `execute` — foreground, background job, and promoted job alike — so this one
+ * seam covers all of them.
  *
  * The adapter never touches `request.command`: injection is an environment
  * MAP, so nothing a workspace controls is ever interpolated into a command
@@ -24,7 +24,7 @@
  * Layering is deliberate and matches the executor's own contract
  * (`{...ENV_OVERRIDES, ...spec.env, ...spec.dshEnv}`):
  *
- * - direnv values are placed FIRST, so an explicit `request.env` from a
+ * - direnv values are placed FIRST, so an explicit `spec.env` from a
  *   trusted in-process caller still wins over the workspace;
  * - `DSH_*` names are already excluded by `core.selectInjectable`, so the
  *   managed snapshot merged last can never be displaced by a workspace.
@@ -36,7 +36,7 @@
  * @module dsh-direnv/shell-adapter
  */
 import type { Context } from '@deepseek-ai/cordis'
-import type { ShellExecRequest, ShellExecution, ShellProcessRead, ShellRunResult } from '@deepseek-ai/dsh-shell'
+import type { ShellExecSpec, ShellExecution, ShellProcessRead, ShellRunResult } from '@deepseek-ai/dsh-shell'
 import { installChainLink, type ChainHandle } from './method-chain.js'
 
 /** The adapter's disposal boundary. */
@@ -47,12 +47,6 @@ export interface DirenvShellAdapterHandle {
 
 /** Bound on an appended notice, so a pathological path cannot flood a result. */
 const MAX_NOTICE_BYTES = 4_096
-
-/**
- * Spec-borne notice channel. A symbol keeps the executor's string-keyed reads
- * untouched; `enumerable: true` is what lets an object-spread clone carry it.
- */
-const NOTICE: unique symbol = Symbol('dsh-direnv.notice')
 
 /**
  * Append one notice to a bounded collected-output record, preserving the
@@ -141,36 +135,15 @@ function withNotice(execution: ShellExecution, notice: string): ShellExecution {
  * @returns the adapter handle.
  */
 export function installDirenvShellAdapter(ctx: Context): DirenvShellAdapterHandle {
-  /** Notices keyed by the exact spec object `resolve` returned. */
-  const notices = new WeakMap<object, string>()
-
-  /** Recall the notice carried by one resolved spec, clone or not. */
-  const recall = (spec: unknown): string | undefined => {
-    if (typeof spec !== 'object' || spec === null) return undefined
-    const tagged = (spec as Record<PropertyKey, unknown>)[NOTICE]
-    if (typeof tagged === 'string') return tagged
-    return notices.get(spec)
-  }
-
-  /**
-   * Record a notice against one resolved spec. The WeakMap covers a spec passed
-   * by reference; the enumerable symbol property is what survives the
-   * object-spread clones callers make before execution.
-   */
-  const remember = (spec: object, notice: string): void => {
-    notices.set(spec, notice)
-    try {
-      Object.defineProperty(spec, NOTICE, { value: notice, enumerable: true, configurable: true, writable: true })
-    } catch {
-      /* A frozen spec keeps the WeakMap entry as its only channel. */
-    }
-  }
-
   const handles: ChainHandle[] = []
 
-  const resolveLink = installChainLink(ctx.shell, 'resolve', (next, _thisArg, args) => {
-    const request = args[0] as ShellExecRequest | undefined
-    if (request === undefined || typeof request.command !== 'string') return next()
+  // The `execute` seam is asynchronous, so the probe stays off the event loop
+  // and the notice can be computed in the same step that injects the map.
+  // Installing it can fail (a provider without `execute`); nothing is left
+  // behind when it does, so the owner fiber can go inactive safely.
+  const executeLink = installChainLink(ctx.shell, 'execute', async (next, _thisArg, args) => {
+    const spec = args[0] as ShellExecSpec | undefined
+    if (spec === undefined || typeof spec.command !== 'string') return next()
     if (!ctx.direnv.enabled) return next()
 
     // currentInitiator() throws once the agents service is disposed; Cordis
@@ -184,43 +157,21 @@ export function installDirenvShellAdapter(ctx: Context): DirenvShellAdapterHandl
     // Match native direnv: the command's own directory selects the .envrc, so
     // a monorepo package gets its own environment instead of silently
     // inheriting the repository root's. `probeDirectory` falls back to the
-    // workspace whenever workdir is absent, relative, or not a real directory.
-    const probeDir = ctx.direnv.probeDirectory(workspace, request.workdir)
-    const { env, status, notice } = ctx.direnv.forWorkspace(probeDir)
+    // workspace whenever the spec's workdir is absent or not a real directory.
+    const probeDir = ctx.direnv.probeDirectory(workspace, spec.workdir)
+    const { env, status, notice } = await ctx.direnv.forWorkspace(probeDir)
     if (status.kind === 'no-rc' || status.kind === 'disabled') return next()
 
     // `undefined` values are the seam's removal convention and must survive the
     // merge, so the map is built loosely and narrowed only at the seam boundary
     // (whose declared type does not model removal).
-    const merged: Record<string, string | undefined> = { ...env, ...request.env }
-    const nextRequest: ShellExecRequest = {
-      ...request,
-      ...Object.keys(merged).length === 0 ? {} : { env: merged as Record<string, string> },
-    }
-    const spec = next(nextRequest, ...args.slice(1))
-    if (notice !== undefined && typeof spec === 'object' && spec !== null) remember(spec, notice)
-    return spec
+    const merged: Record<string, string | undefined> = { ...env, ...spec.env }
+    const nextSpec: ShellExecSpec = Object.keys(merged).length === 0
+      ? spec
+      : { ...spec, env: merged as Record<string, string> }
+    const execution = await next(nextSpec) as ShellExecution
+    return notice === undefined ? execution : withNotice(execution, notice)
   })
-  handles.push(resolveLink)
-
-  // Installing the second link can fail (a provider without `execute`). The
-  // owner fiber is about to go inactive, so a surviving `resolve` wrapper would
-  // fault every later shell call on the dead `ctx.direnv` it reads.
-  const executeLink = (() => {
-    try {
-      return installChainLink(ctx.shell, 'execute', (next, _thisArg, args) => {
-        const notice = recall(args[0])
-        const outcome = next() as Promise<ShellExecution> | undefined
-        if (notice === undefined || outcome === undefined) return outcome
-        // `execute` resolves the prepared handle; guard the shape instead of assuming it.
-        if (typeof outcome.then !== 'function') return outcome
-        return outcome.then((execution) => withNotice(execution, notice))
-      })
-    } catch (error) {
-      for (const handle of handles.splice(0).reverse()) handle.dispose()
-      throw error
-    }
-  })()
   handles.push(executeLink)
 
   let disposed = false
