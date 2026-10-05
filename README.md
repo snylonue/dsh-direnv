@@ -25,7 +25,7 @@ whether the workspace has an active direnv environment:
 
 ```text
 [dsh-direnv] The workspace direnv environment is active.
-[dsh-direnv] /home/me/proj/.envrc injects 3 variable(s) into every bash command:
+[dsh-direnv] /home/me/proj/.envrc injects 3 variable(s) into every command the agent runs:
 [dsh-direnv]   API_BASE, PROJECT_TOOLCHAIN, RUST_LOG
 [dsh-direnv] Values are applied to each command's environment and are deliberately not shown here.
 ```
@@ -38,7 +38,7 @@ immediately. A workspace with no `.envrc` stays silent, and the message is a
 instead of accumulating stale copies.
 
 Resolving at startup also warms the per-directory cache, so the session's first
-bash command reuses that probe instead of paying for a second one. Set
+command reuses that probe instead of paying for a second one. Set
 `sessionContext: false` to suppress the message entirely.
 
 ## The blocked-workspace UX
@@ -170,7 +170,7 @@ To uninstall, use `dsh plugin --profile web remove dsh-direnv`.
   makes `direnv export` succeed while applying nothing; this plugin reports that
   case as `denied` and tells the user to check with `direnv status`.
 - **Persistent terminals are out of scope.** DSH mounts `terminals` inside a
-  preset-private realm; this plugin covers the bash tool (`ctx.shell`).
+  preset-private realm; this plugin covers the `ctx.shell` seam.
 - **`direnv export json` returns a diff** against the environment direnv ran in.
   The plugin filters it: `DSH_*` and `DIRENV_*` names are dropped, as is any
   name that is not a portable environment identifier.

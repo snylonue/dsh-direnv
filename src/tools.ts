@@ -55,8 +55,8 @@ export function apply(ctx: Context): void {
   ctx.tools.register(defineTool({
     name: 'direnv_allow',
     description: [
-      'Ask the user to approve a workspace direnv file (.envrc or .env) so its environment variables load into future bash commands.',
-      'Call this only when a bash result carries a [dsh-direnv] notice saying the workspace direnv environment is blocked, or when the user explicitly asks to approve one.',
+      'Ask the user to approve a workspace direnv file (.envrc or .env) so its environment variables load into future commands.',
+      'Call this only when a command result carries a [dsh-direnv] notice saying the workspace direnv environment is blocked, or when the user explicitly asks to approve one.',
       'The user sees the file path, its SHA-256, and a preview of its contents, and must approve before anything is written.',
       'Approving authorizes exactly the current file content: editing the file afterwards requires a new approval.',
       'This tool never writes or edits the file itself.',
@@ -121,7 +121,7 @@ export function apply(ctx: Context): void {
       const preview = previewRc(path, ctx.direnv.settings.previewBytes)
       const reason = [
         args.reason === undefined || args.reason.trim().length === 0 ? undefined : args.reason.trim(),
-        `Approve this direnv file so its environment loads into bash commands?`,
+        `Approve this direnv file so its environment loads into future commands?`,
         `  path:   ${preview.path}`,
         `  size:   ${preview.bytes} bytes`,
         `  sha256: ${preview.sha256}`,
@@ -166,7 +166,7 @@ export function apply(ctx: Context): void {
         variables,
         detail: [
           `dsh-direnv: approved ${path}.`,
-          `The next bash command in this workspace receives ${variables} injected variable${variables === 1 ? '' : 's'}.`,
+          `The next command in this workspace receives ${variables} injected variable${variables === 1 ? '' : 's'}.`,
           ...after.kind === 'injected' ? [] : [`Current state: ${ctx.direnv.describe(approvedDir)}.`],
         ].join(' '),
       }

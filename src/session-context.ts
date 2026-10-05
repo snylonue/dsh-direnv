@@ -56,7 +56,7 @@ export function injectSessionContext(ctx: Context, agent: Agent): void {
     const probeDir = ctx.direnv.probeDirectory(workspace, undefined)
 
     // Resolving answers the context AND warms the per-directory cache, so the
-    // session's first bash command reuses this probe.
+    // session's first command reuses this probe.
     const status = ctx.direnv.statusFor(probeDir)
     const text = sessionContextText(status, probeDir)
     if (text === undefined) return
