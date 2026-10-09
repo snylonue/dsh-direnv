@@ -647,6 +647,30 @@ describeReal("direnv injection (real direnv)", () => {
 		}
 	});
 
+	it("uses native deny status and notices a subsequent external allow", async () => {
+		const box = sandbox();
+		const rc = writeRc(box, ".", "");
+		const app = await boot(box);
+		try {
+			expect((await app.ctx.direnv.statusFor(box.workspace)).kind).toBe(
+				"no-rc",
+			);
+			const denied = spawnSync("direnv", ["deny", rc], { env: direnvEnv(box) });
+			expect(denied.status).toBe(0);
+			expect(await app.ctx.direnv.statusFor(box.workspace)).toMatchObject({
+				kind: "denied",
+				rcPath: rc,
+				env: {},
+			});
+			allowWithRealDirenv(box, rc);
+			expect((await app.ctx.direnv.statusFor(box.workspace)).kind).toBe(
+				"no-rc",
+			);
+		} finally {
+			await app.dispose();
+		}
+	});
+
 	it("treats an empty allowed .envrc as no injection and no notice", async () => {
 		const box = sandbox();
 		writeRc(box, ".", "");

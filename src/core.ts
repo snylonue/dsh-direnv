@@ -12,9 +12,7 @@
  */
 import type { ExecFileException } from "node:child_process";
 import { execFileNoStdin } from "./process.js";
-import { createHash } from "node:crypto";
 import { statSync } from "node:fs";
-// resolvePath is used by the deny-store hash, which mirrors direnv's own.
 import { basename, isAbsolute, join, resolve as resolvePath } from "node:path";
 import { realpathSync } from "node:fs";
 import { DSH_ENV_PREFIX } from "@deepseek-ai/dsh-shell";
@@ -373,11 +371,6 @@ export function selectInjectable(diff: Record<string, DiffEntry>): {
 	return { env, dropped };
 }
 
-/** Recognize direnv's own refusal text without pinning ANSI or wording. */
-export function looksBlocked(stderr: string): boolean {
-	return /is blocked|blocked\. Run/i.test(stderr);
-}
-
 /**
  * The directory holding direnv's authorization stores, following direnv's own
  * XDG layout (`$XDG_DATA_HOME/direnv`, else `$HOME/.local/share/direnv`).
@@ -394,30 +387,6 @@ export function direnvStoreDir(
 				? join(env.HOME, ".local", "share")
 				: undefined;
 	return dataHome === undefined ? undefined : join(dataHome, "direnv");
-}
-
-/**
- * Whether direnv has recorded a DENY for this exact file.
- *
- * A denied `.envrc` is indistinguishable from an empty one by its export
- * output — direnv exits zero and applies nothing in both cases — so the deny
- * store is the only authoritative signal. The file name is direnv's own
- * `pathHash`: sha256 of the absolute path plus a newline.
- */
-export function isDenied(
-	rcPath: string,
-	env: NodeJS.ProcessEnv | undefined = process.env,
-): boolean {
-	const store = direnvStoreDir(env);
-	if (store === undefined) return false;
-	const hash = createHash("sha256")
-		.update(`${resolvePath(rcPath)}\n`)
-		.digest("hex");
-	try {
-		return statSync(join(store, "deny", hash)).isFile();
-	} catch {
-		return false;
-	}
 }
 
 /**
@@ -441,24 +410,31 @@ export function hasAppliedEntries(diff: Record<string, DiffEntry>): boolean {
 export async function resolveStatus(
 	workspace: string,
 	config: DirenvConfig,
-	rcPath: string | undefined,
+	rc: NativeRc | null,
 ): Promise<DirenvStatus> {
 	if (!config.enabled) return { kind: "disabled", env: {}, dropped: [] };
+	if (rc?.allowed === 1) {
+		return {
+			kind: "blocked",
+			rcPath: rc.path,
+			env: {},
+			dropped: [],
+			detail: "the workspace .envrc is not approved",
+		};
+	}
+	const rcPath = rc?.path;
 	let stdout: string;
 	try {
 		stdout = (await runExport(workspace, config)).stdout;
 	} catch (error) {
-		const failure = error as ExecFileException & { stderr?: string };
-		const blocked =
-			typeof failure.code === "number" && looksBlocked(failure.stderr ?? "");
+		const failure = error as ExecFileException;
 		return {
-			kind: blocked ? "blocked" : "error",
+			kind: "error",
 			env: {},
 			dropped: [],
 			...(rcPath === undefined ? {} : { rcPath }),
-			detail: blocked
-				? "the workspace .envrc is not approved; native direnv refused to load it"
-				: failure.killed && typeof failure.code !== "string"
+			detail:
+				failure.killed && typeof failure.code !== "string"
 					? `direnv export timed out after ${config.probeTimeoutMs} ms`
 					: `direnv export failed (${String(failure.code)})`,
 		};
@@ -480,12 +456,9 @@ export async function resolveStatus(
 		return { kind: "no-rc", env, dropped };
 	}
 	if (Object.keys(env).length === 0 && !hasAppliedEntries(diff)) {
-		// An RC exists, direnv exited zero, yet it applied nothing. That is either
-		// a denied file (direnv >= 2.33 revokes silently) or a legitimately empty
-		// one; only the deny store distinguishes them, so an empty .envrc is
-		// reported as "nothing to inject" rather than as an error the user must act
-		// on. `unset`-only diffs are non-empty here and therefore still inject.
-		if (!isDenied(rcPath)) {
+		// Native status distinguishes an empty RC from an explicit denial (allowed=2).
+		// `unset`-only diffs are non-empty here and therefore still inject.
+		if (rc?.allowed !== 2) {
 			return { kind: "no-rc", rcPath, env, dropped };
 		}
 		return {

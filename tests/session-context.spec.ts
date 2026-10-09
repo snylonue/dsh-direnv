@@ -71,14 +71,6 @@ function exported(diff: Record<string, string | null>): CommandResult {
 	};
 }
 
-const BLOCKED_RUN: CommandResult = {
-	code: 1,
-	signal: null,
-	stdout: "",
-	stderr:
-		"direnv: error /ws/.envrc is blocked. Run `direnv allow` to approve its content",
-};
-
 describe("sessionContextText", () => {
 	it("names an active environment without leaking values", () => {
 		const status: DirenvStatus = {
@@ -258,13 +250,18 @@ describe("injectSessionContext", () => {
 
 	it("tells the model to approve a blocked .envrc", async () => {
 		const rcPath = join(scratch(), ".envrc");
-		const app = await boot({ rcPath, probe: () => BLOCKED_RUN });
+		const app = await boot({ rcPath });
+		vi.mocked(Core.readNativeStatus).mockResolvedValue({
+			path: rcPath,
+			allowed: 1,
+		});
 		try {
 			await injectSessionContext(app.ctx, app.agent);
 			expect(app.injected).toHaveLength(1);
 			const text = (app.injected[0]?.content[0] as { text: string } | undefined)
 				?.text;
 			expect(text).toContain(`direnv_allow path=${rcPath}`);
+			expect(app.probeCalls()).toBe(0);
 		} finally {
 			await app.dispose();
 		}

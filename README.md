@@ -198,8 +198,7 @@ pnpm test        # builds, then runs vitest
 The suite runs in layers:
 
 - **pure core logic** — diff parsing, filtering, refusals, the
-  cache stamp, the session-start context renderer, and the deny-store hash the
-  plugin reproduces from direnv;
+  cache stamp and the session-start context renderer;
 - **the method chain**, including the non-LIFO disposal case a naive
   descriptor-restoring wrapper gets wrong;
 - **the approval gate**, asserting that nothing reaches `direnv allow` without

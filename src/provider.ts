@@ -194,8 +194,7 @@ export default class DirenvService extends Service {
 				detail: error instanceof Error ? error.message : String(error),
 			};
 		}
-		if (!this.config.cache)
-			return resolveStatus(probeDir, this.config, rc?.path);
+		if (!this.config.cache) return resolveStatus(probeDir, this.config, rc);
 
 		const stamp = this.stampFor(rc);
 		const hit = this.cache.get(probeDir);
@@ -203,7 +202,7 @@ export default class DirenvService extends Service {
 
 		const key = `${probeDir}\u0000${stamp}`;
 		const pending =
-			this.inflight.get(key) ?? resolveStatus(probeDir, this.config, rc?.path);
+			this.inflight.get(key) ?? resolveStatus(probeDir, this.config, rc);
 		this.inflight.set(key, pending);
 		let status: DirenvStatus;
 		try {

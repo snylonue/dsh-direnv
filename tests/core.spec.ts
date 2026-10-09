@@ -9,7 +9,6 @@ import {
 	symlinkSync,
 	writeFileSync,
 } from "node:fs";
-import { createHash } from "node:crypto";
 import { dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,10 +23,8 @@ import {
 	resolveStatus,
 	refuseAllow,
 	selectInjectable,
-	looksBlocked,
 	hasAppliedEntries,
 	cacheStamp,
-	isDenied,
 	assertDirenvConfig,
 	defaultConfig,
 } from "../src/core.js";
@@ -97,11 +94,48 @@ describe("native command execution", () => {
 			stdout: "secret-value",
 			stderr: "private-diagnostic",
 		});
-		const status = await resolveStatus(workspace, config, undefined);
+		const status = await resolveStatus(workspace, config, null);
 		expect(status.kind).toBe("error");
 		expect(status.env).toEqual({});
 		expect(status.detail).not.toContain("secret-value");
 		expect(status.detail).not.toContain("private-diagnostic");
+	});
+
+	it("uses native authorization to distinguish a denied RC from an empty one", async () => {
+		const workspace = command('process.stdout.write("{}");');
+		const path = join(workspace, ".envrc");
+		expect(
+			(await resolveStatus(workspace, config, { path, allowed: 0 })).kind,
+		).toBe("no-rc");
+		expect(
+			(await resolveStatus(workspace, config, { path, allowed: 2 })).kind,
+		).toBe("denied");
+	});
+
+	it("returns blocked from native status without starting export", async () => {
+		const workspace = scratch();
+		await expect(
+			resolveStatus(
+				workspace,
+				{ ...config, executable: "/missing/direnv" },
+				{
+					path: join(workspace, ".envrc"),
+					allowed: 1,
+				},
+			),
+		).resolves.toMatchObject({ kind: "blocked", env: {} });
+	});
+
+	it("does not classify an export failure by its stderr text", async () => {
+		const workspace = command(
+			'process.stderr.write("direnv: error RC is blocked. Run direnv allow"); process.exitCode = 1;',
+		);
+		const status = await resolveStatus(workspace, config, {
+			path: join(workspace, ".envrc"),
+			allowed: 0,
+		});
+		expect(status.kind).toBe("error");
+		expect(status.env).toEqual({});
 	});
 
 	it("uses the native stdout buffer limit", async () => {
@@ -257,70 +291,6 @@ describe("cacheStamp", () => {
 
 	it("handles an undefined RC, meaning no .envrc governs the directory", () => {
 		expect(typeof cacheStamp(undefined)).toBe("string");
-	});
-});
-
-describe("isDenied", () => {
-	it("finds a deny entry written by the REAL direnv, using its own path hash", () => {
-		// The hash must match direnv's pathHash: sha256("<abs path>\n").
-		const dir = scratch();
-		const data = join(dir, "data");
-		mkdirSync(data, { recursive: true });
-		const env = { ...process.env, XDG_DATA_HOME: data };
-		const rc = join(dir, ".envrc");
-		writeFileSync(rc, "export A=1\n");
-		expect(isDenied(rc, env)).toBe(false);
-
-		// Write the entry exactly as direnv would.
-		const hash = createHash("sha256").update(`${rc}\n`).digest("hex");
-		mkdirSync(join(data, "direnv", "deny"), { recursive: true });
-		writeFileSync(join(data, "direnv", "deny", hash), `${rc}\n`);
-		expect(isDenied(rc, env)).toBe(true);
-	});
-
-	it("reports false when no store location is knowable", () => {
-		const dir = scratch();
-		const rc = join(dir, ".envrc");
-		writeFileSync(rc, "export A=1\n");
-		expect(isDenied(rc, {})).toBe(false);
-	});
-
-	it("falls back to HOME/.local/share when XDG_DATA_HOME is unset", () => {
-		const home = scratch();
-		const rc = join(home, ".envrc");
-		writeFileSync(rc, "export A=1\n");
-		const env = { HOME: home };
-		const hash = createHash("sha256").update(`${rc}\n`).digest("hex");
-		mkdirSync(join(home, ".local", "share", "direnv", "deny"), {
-			recursive: true,
-		});
-		writeFileSync(
-			join(home, ".local", "share", "direnv", "deny", hash),
-			`${rc}\n`,
-		);
-		expect(isDenied(rc, env)).toBe(true);
-	});
-});
-
-describe("looksBlocked", () => {
-	it("recognizes direnv blocked text with and without ANSI styling", () => {
-		expect(
-			looksBlocked(
-				"direnv: error /a/.envrc is blocked. Run `direnv allow` to approve its content",
-			),
-		).toBe(true);
-		expect(
-			looksBlocked(
-				"\u001B[31mdirenv: error /a/.envrc is blocked. Run `direnv allow`\u001B[0m",
-			),
-		).toBe(true);
-	});
-
-	it("does not treat unrelated errors as blocked", () => {
-		expect(
-			looksBlocked("direnv: error stat /a/b: no such file or directory"),
-		).toBe(false);
-		expect(looksBlocked("")).toBe(false);
 	});
 });
 

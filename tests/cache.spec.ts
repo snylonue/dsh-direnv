@@ -181,7 +181,7 @@ describeReal("per-workspace cache", () => {
 			// Content changed, so the authorization hash no longer matches: the
 			// cache must not serve the old value.
 			expect((await app.service.statusFor(box.ws)).kind).toBe("blocked");
-			expect(app.probes).toBe(2);
+			expect(app.probes).toBe(1);
 			spawnSync("direnv", ["allow", rc], { env: box.env });
 			expect((await app.service.statusFor(box.ws)).env.V).toBe("v2");
 		} finally {
@@ -268,7 +268,7 @@ describeReal("per-workspace cache", () => {
 				`[whitelist]\nexact = [${JSON.stringify(box.ws)}]\n`,
 			);
 			expect((await app.service.statusFor(box.ws)).env.WHITELISTED).toBe("1");
-			expect(app.probes).toBe(2);
+			expect(app.probes).toBe(1);
 		} finally {
 			await app.dispose();
 		}
