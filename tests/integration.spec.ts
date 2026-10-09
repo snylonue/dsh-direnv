@@ -101,25 +101,6 @@ function writeRc(
 	return rcPath;
 }
 
-/** An `allow` runner that writes into the sandbox's own store. */
-function allowIn(box: Sandbox) {
-	return (
-		rcPath: string,
-		config: { executable: string; probeTimeoutMs: number },
-	) => {
-		const result = spawnSync(config.executable, ["allow", rcPath], {
-			env: direnvEnv(box),
-			timeout: config.probeTimeoutMs,
-			encoding: "utf8",
-		});
-		return {
-			code: result.status,
-			stdout: result.stdout ?? "",
-			stderr: result.stderr ?? "",
-		};
-	};
-}
-
 /** Run the real direnv export in one sandbox, with its isolated store. */
 function exportIn(box: Sandbox, dir: string, config: DirenvConfig) {
 	const result = spawnSync(config.executable, ["export", "json"], {
@@ -286,7 +267,6 @@ async function boot(
 				// and the cache stamp always describe the same direnv store.
 				super(applyCtx, config, {
 					env: direnvEnv(box),
-					runAllow: allowIn(box),
 					...(runExport === undefined
 						? { runExport: (dir, cfg) => exportIn(box, dir, cfg) }
 						: { runExport }),

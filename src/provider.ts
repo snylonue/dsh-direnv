@@ -95,15 +95,6 @@ export interface AllowRun {
 	stderr: string;
 }
 
-/** Constructor-only seams for deterministic tests. */
-export interface DirenvServiceRuntime extends DirenvRuntime {
-	/** Injectable `direnv allow` runner; production spawns the real executable asynchronously. */
-	runAllow?: (
-		rcPath: string,
-		config: ExportConfig,
-	) => AllowRun | Promise<AllowRun>;
-}
-
 export default class DirenvService extends Service {
 	static Config = z.object({
 		executable: z.string().default(defaultConfig.executable),
@@ -137,7 +128,7 @@ export default class DirenvService extends Service {
 	constructor(
 		ctx: Context,
 		private readonly config: DirenvConfig = defaultConfig,
-		private readonly runtime: DirenvServiceRuntime = {},
+		private readonly runtime: DirenvRuntime = {},
 	) {
 		super(ctx, "direnv");
 		assertDirenvConfig(config);
@@ -332,8 +323,7 @@ export default class DirenvService extends Service {
 	): Promise<{ ok: true } | { ok: false; reason: string }> {
 		const refusal = this.refusalFor(rcPath, workspace);
 		if (refusal !== undefined) return { ok: false, reason: refusal };
-		const run = this.runtime.runAllow ?? runAllow;
-		const result = await run(rcPath, { ...this.config, env: this.direnvEnv });
+		const result = await runAllow(rcPath, { ...this.config, env: this.direnvEnv });
 		if (result.code !== 0) {
 			const detail = firstLine(result.stderr);
 			return {

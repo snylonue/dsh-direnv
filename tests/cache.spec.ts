@@ -102,17 +102,6 @@ async function boot(box: Sandbox, overrides: Partial<DirenvConfig> = {}) {
 							spawnFailed: r.error !== undefined,
 						};
 					},
-					runAllow: (rcPath: string, cfg: ExportConfig) => {
-						const r = spawnSync(cfg.executable, ["allow", rcPath], {
-							env: box.env,
-							encoding: "utf8",
-						});
-						return {
-							code: r.status,
-							stdout: r.stdout ?? "",
-							stderr: r.stderr ?? "",
-						};
-					},
 				});
 			}
 		},

@@ -17,6 +17,7 @@ import DirenvService, {
 	type DirenvConfig,
 } from "../src/provider.js";
 import * as AllowTool from "../src/tools.js";
+import * as Core from "../src/core.js";
 
 const created: string[] = [];
 function scratch(prefix = "dsh-direnv-allow-"): string {
@@ -25,6 +26,7 @@ function scratch(prefix = "dsh-direnv-allow-"): string {
 	return dir;
 }
 afterEach(() => {
+	vi.restoreAllMocks();
 	for (const dir of created.splice(0))
 		rmSync(dir, { recursive: true, force: true });
 });
@@ -65,7 +67,7 @@ interface CapturedTool {
 	) => Promise<Record<string, unknown>>;
 }
 
-/** The `direnv allow` runner the harness injects; it records the path it received. */
+/** Records the RC path passed to the mocked child process. */
 type AllowSpy = (rcPath: string) => {
 	code: number;
 	stdout: string;
@@ -169,6 +171,15 @@ async function harness(
 		stdout: "",
 		stderr: options.allowStderr ?? "",
 	}));
+	vi.spyOn(Core, "runChild").mockImplementation(async (_executable, args) => {
+		expect(args[0]).toBe("allow");
+		return {
+			...allowSpy(String(args[1])),
+			signal: null,
+			timedOut: false,
+			spawnFailed: false,
+		};
+	});
 	const providerFiber = await ctx.plugin(
 		class extends DirenvService {
 			constructor(applyCtx: Context) {
@@ -176,7 +187,6 @@ async function harness(
 					applyCtx,
 					{ ...defaultConfig, ...options.config },
 					{
-						runAllow: (path: string) => allowSpy(path),
 						runExport: (dir: string) => {
 							options.probed?.push(dir);
 							return {

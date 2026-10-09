@@ -19,12 +19,12 @@ import { afterAll, describe, expect, it } from "vitest";
 import DirenvService, {
 	defaultConfig,
 	type DirenvConfig,
-	type DirenvServiceRuntime,
 } from "../src/provider.js";
 import {
 	SESSION_CONTEXT_MAX_NAMES,
 	SESSION_CONTEXT_PLUGIN,
 	sessionContextText,
+	type DirenvRuntime,
 	type DirenvStatus,
 	type ExportRun,
 } from "../src/core.js";
@@ -172,7 +172,7 @@ async function boot(
 	ctx.provide("shell", {} as never);
 	const rcPath = options.rcPath;
 	let probeCalls = 0;
-	const runtime: DirenvServiceRuntime = {
+	const runtime: DirenvRuntime = {
 		env: { ...process.env, HOME: root, XDG_DATA_HOME: join(root, "data") },
 		findRcPath: () => rcPath,
 		runExport: () => {
