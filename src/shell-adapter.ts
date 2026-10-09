@@ -124,9 +124,18 @@ function withNotice(execution: ShellExecution, notice: string): ShellExecution {
 
 	return new Proxy(execution, {
 		get(target, property, receiver) {
-			if (property === "result") return (resultView ??= resultOf);
-			if (property === "readOutput") return (readView ??= readOf);
-			if (property === "observed") return (observedView ??= observedOf());
+			if (property === "result") {
+				resultView ??= resultOf;
+				return resultView;
+			}
+			if (property === "readOutput") {
+				readView ??= readOf;
+				return readView;
+			}
+			if (property === "observed") {
+				observedView ??= observedOf();
+				return observedView;
+			}
 			return Reflect.get(target, property, receiver);
 		},
 	});

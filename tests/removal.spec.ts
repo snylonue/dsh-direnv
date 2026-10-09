@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Context, Service } from "@deepseek-ai/cordis";
@@ -29,7 +29,7 @@ describe("seam removal convention", () => {
 		fibers.push(await ctx.plugin(FakeAgents));
 		try {
 			const spec = ctx.shell.resolve({
-				command: 'printf "[%s]" "${REMOVE_ME-unset}"',
+				command: `printf "[%s]" "\${REMOVE_ME-unset}"`,
 				env: { REMOVE_ME: undefined as unknown as string },
 			} as never);
 			const result = await (await ctx.shell.execute(spec)).result();

@@ -8,7 +8,7 @@
  *
  * @module dsh-direnv/integration-plugin
  */
-import { type Context } from "@deepseek-ai/cordis";
+import type { Context } from "@deepseek-ai/cordis";
 import z from "@deepseek-ai/schemastery";
 import { installDirenvSessionContext } from "./session-context.js";
 import { installDirenvShellAdapter } from "./shell-adapter.js";
@@ -20,7 +20,7 @@ export const name = "direnv-integration";
 export const inject = ["agents", "shell", "direnv"];
 
 /** No integration-local settings; behavior belongs to the provider row. */
-export interface Config {}
+export type Config = Record<string, never>;
 
 export const Config = z.object({}) as z<Config>;
 
@@ -32,7 +32,7 @@ export function apply(ctx: Context, _config: Config): void {
 
 	ctx.effect(() => {
 		const adapter = installDirenvShellAdapter(ctx);
-		let sessionContext;
+		let sessionContext: ReturnType<typeof installDirenvSessionContext>;
 		try {
 			sessionContext = installDirenvSessionContext(ctx);
 		} catch (error) {

@@ -20,7 +20,7 @@ import {
 	type ExportConfig,
 } from "../src/provider.js";
 import DirenvService from "../src/provider.js";
-import { BASH, HAS_DIRENV, requireRealProcesses } from "./helpers.js";
+import { requireRealProcesses } from "./helpers.js";
 import { installDirenvShellAdapter } from "../src/shell-adapter.js";
 
 const describeReal = requireRealProcesses("real-direnv tests")
@@ -141,7 +141,7 @@ function writeRc(box: Sandbox, body: string): string {
 		encoding: "utf8",
 	});
 	if (r.status !== 0)
-		throw new Error("test setup: allow failed: " + String(r.stderr));
+		throw new Error(`test setup: allow failed: ${String(r.stderr)}`);
 	return rc;
 }
 

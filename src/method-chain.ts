@@ -24,7 +24,7 @@ import { getPropertyDescriptor, symbols } from "@deepseek-ai/cordis";
  * method when this is the innermost one; calling it with no arguments forwards
  * the link's own arguments unchanged.
  */
-export type ChainWrapper<T extends object, K extends keyof T> = (
+export type ChainWrapper<T extends object, _K extends keyof T> = (
 	next: (...forwarded: unknown[]) => unknown,
 	thisArg: T,
 	args: unknown[],
@@ -94,7 +94,7 @@ export function installChainLink<T extends object, K extends keyof T>(
 		const fresh: ChainState = {
 			links: [],
 			original: before.value,
-			hadOwn: Object.prototype.hasOwnProperty.call(target, method),
+			hadOwn: Object.hasOwn(target, method),
 			before,
 			trampoline: undefined,
 		};

@@ -39,7 +39,7 @@ export const name = "direnv-tools";
 export const inject = ["tools", "systemPrompt", "direnv"];
 
 /** No integration-local settings; behavior belongs to the provider row. */
-export interface Config {}
+export type Config = Record<string, never>;
 export const Config = z.object({}) as z<Config>;
 
 /** Indent a preview block so a multi-line `.envrc` stays readable in a one-line reason. */

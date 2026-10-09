@@ -23,7 +23,7 @@ import ToolRuntime from "@deepseek-ai/dsh-tools";
 import SystemPrompt from "@deepseek-ai/dsh-system-prompt";
 import DirenvService, { defaultConfig } from "../src/provider.js";
 import { installDirenvShellAdapter } from "../src/shell-adapter.js";
-import { BASH, HAS_DIRENV, requireRealProcesses } from "./helpers.js";
+import { requireRealProcesses } from "./helpers.js";
 import * as AllowTool from "../src/tools.js";
 
 const created: string[] = [];
@@ -138,7 +138,7 @@ describeReal(
 				// The child must actually receive the variable: print it from bash.
 				const result = await bash(app, 'printf %s "$REAL_VAR"');
 				if (result.exitCode !== 0) {
-					throw new Error("child failed: " + result.stderr.text.slice(0, 400));
+					throw new Error(`child failed: ${result.stderr.text.slice(0, 400)}`);
 				}
 				expect(result.stdout.text).toBe("injected-value");
 			} finally {
@@ -160,7 +160,7 @@ describeReal(
 			});
 			const app = await boot(box);
 			try {
-				const result = await bash(app, 'printf "[%s]" "${SECRET_VAR-unset}"');
+				const result = await bash(app, `printf "[%s]" "\${SECRET_VAR-unset}"`);
 				expect(result.stdout.text).toBe("[unset]");
 				expect(result.stderr.text).toContain("[dsh-direnv]");
 				expect(result.stderr.text).toContain("direnv_allow");
@@ -226,7 +226,7 @@ describeReal(
 				// (ctx.shellEnv.collect): the executor merges dshEnv LAST, after direnv.
 				const result = await bash(
 					app,
-					'printf "%s|%s|%s" "$GOOD" "${DSH_EVIL-unset}" "$DSH_SHELL"',
+					`printf "%s|%s|%s" "$GOOD" "\${DSH_EVIL-unset}" "$DSH_SHELL"`,
 					{ dshEnv: { DSH_SHELL: "1", DSH_HOME: "/harness/home" } },
 				);
 				const parts = result.stdout.text.split("|");
@@ -252,7 +252,7 @@ describeReal(
 			});
 			const app = await boot(box);
 			try {
-				const result = await bash(app, 'printf "[%s]" "${ABSENT_VAR-unset}"');
+				const result = await bash(app, `printf "[%s]" "\${ABSENT_VAR-unset}"`);
 				expect(result.stdout.text).toBe("[unset]");
 				expect(result.stderr.text).not.toContain("[dsh-direnv]");
 				expect(result.exitCode).toBe(0);

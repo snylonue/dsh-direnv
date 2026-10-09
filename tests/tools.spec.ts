@@ -9,7 +9,7 @@
  */
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { Context, Service } from "@deepseek-ai/cordis";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import DirenvService, {
@@ -352,7 +352,7 @@ describe("refusals happen before any user is asked", () => {
 	];
 
 	for (const [label, make] of cases) {
-		it("refuses " + label + " without asking or approving", async () => {
+		it(`refuses ${label} without asking or approving`, async () => {
 			const h = await harness();
 			try {
 				const result = await h.call({ path: make(h) });

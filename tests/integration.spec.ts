@@ -24,7 +24,7 @@ import DirenvService, {
 	defaultConfig,
 	type DirenvConfig,
 } from "../src/provider.js";
-import { BASH, HAS_DIRENV, requireRealProcesses } from "./helpers.js";
+import { requireRealProcesses } from "./helpers.js";
 import { installDirenvShellAdapter } from "../src/shell-adapter.js";
 
 /** One isolated direnv sandbox: workspace plus private HOME and XDG roots. */
@@ -82,7 +82,7 @@ function allowWithRealDirenv(box: Sandbox, rcPath: string): void {
 	});
 	if (result.status !== 0)
 		throw new Error(
-			"test setup: direnv allow failed: " + String(result.stderr),
+			`test setup: direnv allow failed: ${String(result.stderr)}`,
 		);
 }
 
@@ -276,7 +276,7 @@ async function boot(
 	runExport?: () => never,
 ): Promise<Booted> {
 	const ctx = new Context();
-	const shell = provideShell(ctx, new RecordingShell());
+	provideShell(ctx, new RecordingShell());
 	const agents = await ctx.plugin(FakeAgents);
 	const config: DirenvConfig = { ...defaultConfig, ...overrides };
 	const serviceFiber = await ctx.plugin(

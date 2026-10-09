@@ -222,7 +222,7 @@ describe("injectSessionContext", () => {
 				kind: SESSION_CONTEXT_PLUGIN,
 				form: "snapshot",
 			});
-			const text = (message?.content[0] as { text: string }).text;
+			const text = (message?.content[0] as { text: string } | undefined)?.text;
 			expect(text).toContain("E2E_ONE, E2E_TWO");
 			expect(text).not.toContain("alpha");
 			expect(text).not.toContain("DIRENV_DIR");
@@ -237,7 +237,7 @@ describe("injectSessionContext", () => {
 		try {
 			await injectSessionContext(app.ctx, app.agent);
 			expect(app.injected).toHaveLength(1);
-			const text = (app.injected[0]?.content[0] as { text: string }).text;
+			const text = (app.injected[0]?.content[0] as { text: string } | undefined)?.text;
 			expect(text).toContain(`direnv_allow path=${rcPath}`);
 		} finally {
 			await app.dispose();

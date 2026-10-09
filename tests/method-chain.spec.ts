@@ -10,7 +10,7 @@ import { installChainLink } from "../src/method-chain.js";
 
 class Greeter {
 	greet(name: string): string {
-		return "base(" + name + ")";
+		return `base(${name})`;
 	}
 }
 
@@ -26,7 +26,7 @@ class GreeterService extends Service {
 		super(ctx, "greeter");
 	}
 	greet(name: string): string {
-		return "base(" + name + ")";
+		return `base(${name})`;
 	}
 }
 
@@ -37,7 +37,7 @@ describe("installChainLink", () => {
 		const link = installChainLink(
 			target,
 			"greet",
-			(next) => "A" + String(next()),
+			(next) => `A${String(next())}`,
 		);
 		expect(target.greet("x")).toBe("Abase(x)");
 		link.dispose();
@@ -50,12 +50,12 @@ describe("installChainLink", () => {
 		const a = installChainLink(
 			target,
 			"greet",
-			(next) => "A(" + String(next()) + ")",
+			(next) => `A(${String(next())})`,
 		);
 		const b = installChainLink(
 			target,
 			"greet",
-			(next) => "B(" + String(next()) + ")",
+			(next) => `B(${String(next())})`,
 		);
 		expect(target.greet("x")).toBe("B(A(base(x)))");
 		b.dispose();
@@ -71,12 +71,12 @@ describe("installChainLink", () => {
 		const a = installChainLink(
 			target,
 			"greet",
-			(next) => "A(" + String(next()) + ")",
+			(next) => `A(${String(next())})`,
 		);
 		const b = installChainLink(
 			target,
 			"greet",
-			(next) => "B(" + String(next()) + ")",
+			(next) => `B(${String(next())})`,
 		);
 		a.dispose();
 		expect(target.greet("x")).toBe("B(base(x))");
@@ -90,23 +90,23 @@ describe("installChainLink", () => {
 		const a = installChainLink(
 			target,
 			"greet",
-			(next) => "A(" + String(next()) + ")",
+			(next) => `A(${String(next())})`,
 		);
 		const b = installChainLink(
 			target,
 			"greet",
-			(next) => "B(" + String(next()) + ")",
+			(next) => `B(${String(next())})`,
 		);
 		const c = installChainLink(
 			target,
 			"greet",
-			(next) => "C(" + String(next()) + ")",
+			(next) => `C(${String(next())})`,
 		);
 		c.dispose();
 		b.dispose();
 		a.dispose();
 		expect(target.greet("x")).toBe("base(x)");
-		expect(Object.prototype.hasOwnProperty.call(target, "greet")).toBe(false);
+		expect(Object.hasOwn(target, "greet")).toBe(false);
 	});
 
 	it("is idempotent and tolerates interleaved disposal", () => {
@@ -114,12 +114,12 @@ describe("installChainLink", () => {
 		const a = installChainLink(
 			target,
 			"greet",
-			(next) => "A(" + String(next()) + ")",
+			(next) => `A(${String(next())})`,
 		);
 		const b = installChainLink(
 			target,
 			"greet",
-			(next) => "B(" + String(next()) + ")",
+			(next) => `B(${String(next())})`,
 		);
 		a.dispose();
 		a.dispose();
@@ -134,7 +134,7 @@ describe("installChainLink", () => {
 		const link = installChainLink(
 			target,
 			"greet",
-			function (next, thisArg, args) {
+			(next, thisArg, args) => {
 				seen = { thisArg, args };
 				return next();
 			},
@@ -169,7 +169,7 @@ describe("installChainLink", () => {
 		const link = installChainLink(
 			ctx.greeter as unknown as GreeterService,
 			"greet",
-			(next) => "A(" + String(next()) + ")",
+			(next) => `A(${String(next())})`,
 		);
 		// Both the proxy and the raw provider observe the wrapper: it was applied
 		// to the provider target, never to a consumer's shadow.
@@ -192,7 +192,7 @@ describe("installChainLink", () => {
 		const link = installChainLink(
 			target,
 			"greet",
-			(next) => "A(" + String(next()) + ")",
+			(next) => `A(${String(next())})`,
 		);
 		target.greet = () => "foreign";
 		link.dispose();
@@ -205,11 +205,11 @@ describe("installChainLink", () => {
 		const link = installChainLink(
 			target,
 			"greet",
-			(next) => "A(" + String(next()) + ")",
+			(next) => `A(${String(next())})`,
 		);
-		expect(Object.prototype.hasOwnProperty.call(target, "greet")).toBe(true);
+		expect(Object.hasOwn(target, "greet")).toBe(true);
 		link.dispose();
-		expect(Object.prototype.hasOwnProperty.call(target, "greet")).toBe(false);
+		expect(Object.hasOwn(target, "greet")).toBe(false);
 		expect(target.greet("x")).toBe("base(x)");
 	});
 

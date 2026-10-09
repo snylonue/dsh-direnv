@@ -15,7 +15,7 @@ import { describe, expect, it } from "vitest";
 import BashLocal from "@deepseek-ai/dsh-bash-local";
 import SubprocessLocal from "@deepseek-ai/dsh-subprocess-local";
 import DirenvService, { defaultConfig } from "../src/provider.js";
-import { BASH, HAS_DIRENV, requireRealProcesses } from "./helpers.js";
+import { requireRealProcesses } from "./helpers.js";
 import { installDirenvShellAdapter } from "../src/shell-adapter.js";
 
 let currentAgent: unknown;
@@ -72,7 +72,7 @@ describeReal("unset semantics against a real child", () => {
 				await ctx.shell.execute(
 					ctx.shell.resolve({
 						command:
-							'printf "[%s]|[%s]" "${INHERITED_VAR-unset}" "${ADDED-unset}"',
+							`printf "[%s]|[%s]" "\${INHERITED_VAR-unset}" "\${ADDED-unset}"`,
 					} as never),
 				)
 			).result();

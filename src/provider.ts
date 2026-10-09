@@ -34,7 +34,6 @@ import {
 	refuseAllow,
 	resolveStatus,
 	runChild,
-	runExport,
 	type DirenvConfig,
 	type DirenvRuntime,
 	type DirenvStatus,
@@ -366,6 +365,7 @@ function dirnameOf(rcPath: string): string {
 export function firstLine(text: string): string {
 	const line =
 		text
+			// biome-ignore lint/suspicious/noControlCharactersInRegex: Match the ESC byte that starts ANSI color sequences.
 			.replace(/\u001B\[[0-9;]*m/g, "")
 			.split("\n")
 			.map((part) => part.trim())

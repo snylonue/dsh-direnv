@@ -7,7 +7,6 @@
  *
  * @module tests/acceptance
  */
-import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,7 +20,7 @@ import ToolRuntime from "@deepseek-ai/dsh-tools";
 import SystemPrompt from "@deepseek-ai/dsh-system-prompt";
 import DirenvService, { defaultConfig } from "../src/provider.js";
 import { installDirenvShellAdapter } from "../src/shell-adapter.js";
-import { BASH, HAS_DIRENV, requireRealProcesses } from "./helpers.js";
+import { requireRealProcesses } from "./helpers.js";
 import * as AllowTool from "../src/tools.js";
 
 const created: string[] = [];
@@ -108,7 +107,7 @@ describeReal("acceptance: unapproved -> approve -> injected", () => {
 		try {
 			// STEP 1 - unapproved: the command runs, gets no workspace env, and the
 			// model is told exactly how to fix it.
-			const blocked = await run('printf "[%s]" "${PROJECT_TOOLCHAIN-unset}"');
+			const blocked = await run(`printf "[%s]" "\${PROJECT_TOOLCHAIN-unset}"`);
 			expect(blocked.exitCode).toBe(0);
 			expect(blocked.stdout.text).toBe("[unset]");
 			expect(blocked.stderr.text).toContain("[dsh-direnv]");

@@ -4,7 +4,6 @@
  *
  * @module tests/e2e-tools
  */
-import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,7 +17,7 @@ import ToolRuntime from "@deepseek-ai/dsh-tools";
 import SystemPrompt from "@deepseek-ai/dsh-system-prompt";
 import DirenvService, { defaultConfig } from "../src/provider.js";
 import { installDirenvShellAdapter } from "../src/shell-adapter.js";
-import { BASH, HAS_DIRENV, requireRealProcesses } from "./helpers.js";
+import { requireRealProcesses } from "./helpers.js";
 import * as DirenvTools from "../src/tools.js";
 
 const roots: string[] = [];
@@ -90,7 +89,7 @@ describeReal("end to end through the tool registry", () => {
 
 		const call = (name: string, args: Record<string, unknown>) =>
 			ctx.tools.execute({
-				callId: "c-" + name,
+				callId: `c-${name}`,
 				name,
 				arguments: args,
 				agent: currentAgent,
@@ -101,7 +100,7 @@ describeReal("end to end through the tool registry", () => {
 			// 1) The bash TOOL — the path the model actually uses. It supplies the
 			//    managed dshEnv snapshot, so this also proves the layering.
 			const blocked = await call("bash", {
-				command: 'printf "[%s]" "${TOOLCHAIN-unset}"',
+				command: `printf "[%s]" "\${TOOLCHAIN-unset}"`,
 				description: "check toolchain",
 			});
 			const blockedText = JSON.stringify(blocked);

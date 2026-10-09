@@ -12,7 +12,7 @@
  */
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { closeSync, openSync, readSync, statSync } from "node:fs";
+import { closeSync, openSync, readSync, statSync, type Stats } from "node:fs";
 // resolvePath is used by the deny-store hash, which mirrors direnv's own.
 import {
 	dirname,
@@ -874,7 +874,7 @@ export function refuseAllow(
 	if (!(RC_NAMES as readonly string[]).includes(base)) {
 		return `path must name one of ${RC_NAMES.join(", ")}: ${rcPath}`;
 	}
-	let stat;
+	let stat: Stats;
 	try {
 		stat = statSync(rcPath);
 	} catch {

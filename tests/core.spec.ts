@@ -154,7 +154,7 @@ describe("selectInjectable", () => {
 		// the subprocess seam's removal convention.
 		const { env } = selectInjectable({ REMOVED: null, KEPT: "v" });
 		expect(env).toEqual({ KEPT: "v", REMOVED: undefined });
-		expect(Object.prototype.hasOwnProperty.call(env, "REMOVED")).toBe(true);
+		expect(Object.hasOwn(env, "REMOVED")).toBe(true);
 	});
 
 	it("still refuses to inject an unset for a managed or unsafe name", () => {
@@ -260,10 +260,10 @@ describe("isDenied", () => {
 
 		// Write the entry exactly as direnv would.
 		const hash = createHash("sha256")
-			.update(rc + "\n")
+			.update(`${rc}\n`)
 			.digest("hex");
 		mkdirSync(join(data, "direnv", "deny"), { recursive: true });
-		writeFileSync(join(data, "direnv", "deny", hash), rc + "\n");
+		writeFileSync(join(data, "direnv", "deny", hash), `${rc}\n`);
 		expect(isDenied(rc, env)).toBe(true);
 	});
 
@@ -280,14 +280,14 @@ describe("isDenied", () => {
 		writeFileSync(rc, "export A=1\n");
 		const env = { HOME: home };
 		const hash = createHash("sha256")
-			.update(rc + "\n")
+			.update(`${rc}\n`)
 			.digest("hex");
 		mkdirSync(join(home, ".local", "share", "direnv", "deny"), {
 			recursive: true,
 		});
 		writeFileSync(
 			join(home, ".local", "share", "direnv", "deny", hash),
-			rc + "\n",
+			`${rc}\n`,
 		);
 		expect(isDenied(rc, env)).toBe(true);
 	});
@@ -297,12 +297,12 @@ describe("looksBlocked", () => {
 	it("recognizes direnv blocked text with and without ANSI styling", () => {
 		expect(
 			looksBlocked(
-				"direnv: error /a/.envrc is blocked. Run \`direnv allow\` to approve its content",
+				"direnv: error /a/.envrc is blocked. Run `direnv allow` to approve its content",
 			),
 		).toBe(true);
 		expect(
 			looksBlocked(
-				"\u001B[31mdirenv: error /a/.envrc is blocked. Run \`direnv allow\`\u001B[0m",
+				"\u001B[31mdirenv: error /a/.envrc is blocked. Run `direnv allow`\u001B[0m",
 			),
 		).toBe(true);
 	});
@@ -319,7 +319,7 @@ describe("previewRc", () => {
 	it("hashes the full file while showing only the bounded head", () => {
 		const dir = scratch();
 		const rc = join(dir, ".envrc");
-		const body = "export A=" + "x".repeat(5000) + "\n";
+		const body = `export A=${"x".repeat(5000)}\n`;
 		writeFileSync(rc, body);
 		const preview = previewRc(rc, 100);
 		expect(preview.bytes).toBe(Buffer.byteLength(body));
