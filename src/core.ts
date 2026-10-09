@@ -10,7 +10,8 @@
  *
  * @module dsh-direnv/core
  */
-import { spawn } from "node:child_process";
+import type { ExecFileException } from "node:child_process";
+import { execFileNoStdin } from "./process.js";
 import { createHash } from "node:crypto";
 import { statSync } from "node:fs";
 // resolvePath is used by the deny-store hash, which mirrors direnv's own.
@@ -227,123 +228,6 @@ export function isExistingDirectory(path: string): boolean {
 	}
 }
 
-/** The outcome of one `direnv export json` child. */
-export interface ExportRun {
-	code: number | null;
-	signal: NodeJS.Signals | null;
-	stdout: string;
-	stderr: string;
-	/** True when the probe budget elapsed and the child was killed. */
-	timedOut: boolean;
-	/** True when the executable could not be started at all. */
-	spawnFailed: boolean;
-}
-
-/**
- * Run one fixed-argv child without blocking the event loop. `shell` is never
- * used: the executable and argv are the caller's, and the directory travels as
- * `cwd`, so no workspace-controlled byte ever reaches a command line.
- *
- * Mirrors the shape `spawnSync` produced — exit code, signal, collected
- * streams, and the timeout/spawn-failure classifications — while yielding the
- * thread to the rest of the harness for the child's whole lifetime. Output
- * beyond `maxBytes` kills the child and reports a spawn failure, matching
- * `spawnSync`'s `maxBuffer` behavior.
- *
- * @param executable - bare PATH name or absolute path.
- * @param args - argv entries, passed verbatim.
- * @param options - cwd, child environment, wall-clock budget, and output cap.
- * @returns the child outcome; never rejects.
- */
-export function runChild(
-	executable: string,
-	args: readonly string[],
-	options: {
-		cwd: string;
-		env: NodeJS.ProcessEnv;
-		timeoutMs: number;
-		maxBytes: number;
-	},
-): Promise<ExportRun> {
-	return new Promise((resolve) => {
-		let settled = false;
-		let timedOut = false;
-		let bytes = 0;
-		let stdout = "";
-		let stderr = "";
-		let child: ReturnType<typeof spawn>;
-		const finish = (outcome: ExportRun): void => {
-			if (settled) return;
-			settled = true;
-			if (timer !== undefined) clearTimeout(timer);
-			resolve(outcome);
-		};
-		try {
-			child = spawn(executable, [...args], {
-				cwd: options.cwd,
-				env: options.env,
-				stdio: ["ignore", "pipe", "pipe"],
-				windowsHide: true,
-			});
-		} catch {
-			resolve({
-				code: null,
-				signal: null,
-				stdout: "",
-				stderr: "",
-				timedOut: false,
-				spawnFailed: true,
-			});
-			return;
-		}
-		const timer = setTimeout(() => {
-			timedOut = true;
-			child.kill("SIGKILL");
-		}, options.timeoutMs);
-		const collect = (
-			stream: typeof child.stdout,
-			append: (text: string) => void,
-		): void => {
-			if (stream === null) return;
-			stream.setEncoding("utf8");
-			stream.on("data", (chunk: string) => {
-				bytes += Buffer.byteLength(chunk);
-				if (bytes > options.maxBytes) {
-					child.kill("SIGKILL");
-					return;
-				}
-				append(chunk);
-			});
-		};
-		collect(child.stdout, (text) => {
-			stdout += text;
-		});
-		collect(child.stderr, (text) => {
-			stderr += text;
-		});
-		child.on("error", () =>
-			finish({
-				code: null,
-				signal: null,
-				stdout,
-				stderr,
-				timedOut: false,
-				spawnFailed: true,
-			}),
-		);
-		child.on("close", (code, signal) =>
-			finish({
-				code,
-				signal,
-				stdout,
-				stderr,
-				timedOut,
-				spawnFailed: bytes > options.maxBytes,
-			}),
-		);
-	});
-}
-
 /**
  * Run `direnv export json` in `workspace`. `export json` prints the DIFF direnv
  * would apply, which is exactly the injection this plugin performs.
@@ -351,13 +235,15 @@ export function runChild(
 export async function runExport(
 	workspace: string,
 	config: DirenvConfig,
-): Promise<ExportRun> {
+): Promise<{ stdout: string; stderr: string }> {
 	assertAbsolutePath(workspace);
-	return runChild(config.executable, ["export", "json"], {
+	return execFileNoStdin(config.executable, ["export", "json"], {
 		cwd: workspace,
-		env: process.env,
-		timeoutMs: config.probeTimeoutMs,
-		maxBytes: 8 * 1024 * 1024,
+		timeout: config.probeTimeoutMs,
+		maxBuffer: 8 * 1024 * 1024,
+		killSignal: "SIGKILL",
+		encoding: "utf8",
+		windowsHide: true,
 	});
 }
 
@@ -373,20 +259,27 @@ export async function readNativeStatus(
 	config: DirenvConfig,
 ): Promise<NativeRc | null> {
 	assertAbsolutePath(workspace);
-	const result = await runChild(config.executable, ["status", "--json"], {
-		cwd: workspace,
-		env: process.env,
-		timeoutMs: config.probeTimeoutMs,
-		maxBytes: 1024 * 1024,
-	});
-	if (result.timedOut)
-		throw new Error(`direnv status timed out after ${config.probeTimeoutMs} ms`);
-	if (result.spawnFailed)
-		throw new Error("direnv could not be started or its status output exceeded the limit");
-	if (result.code !== 0)
-		throw new Error(`direnv status exited with code ${String(result.code)}`);
+	let stdout: string;
 	try {
-		const rc = JSON.parse(result.stdout)?.state?.foundRC;
+		stdout = (await execFileNoStdin(config.executable, ["status", "--json"], {
+			cwd: workspace,
+			timeout: config.probeTimeoutMs,
+			maxBuffer: 1024 * 1024,
+			killSignal: "SIGKILL",
+			encoding: "utf8",
+			windowsHide: true,
+		})).stdout;
+	} catch (error) {
+		const failure = error as ExecFileException;
+		throw new Error(
+			failure.killed && typeof failure.code !== "string"
+				? `direnv status timed out after ${config.probeTimeoutMs} ms`
+				: `direnv status failed (${String(failure.code)})`,
+			{ cause: error },
+		);
+	}
+	try {
+		const rc = JSON.parse(stdout)?.state?.foundRC;
 		if (rc !== null && (
 			!isAbsolutePath(rc?.path) || !isInteger(rc.allowed)
 		)) throw new Error();
@@ -553,39 +446,24 @@ export async function resolveStatus(
 	rcPath: string | undefined,
 ): Promise<DirenvStatus> {
 	if (!config.enabled) return { kind: "disabled", env: {}, dropped: [] };
-	const run = await runExport(workspace, config);
-
-	if (run.spawnFailed) {
+	let stdout: string;
+	try {
+		stdout = (await runExport(workspace, config)).stdout;
+	} catch (error) {
+		const failure = error as ExecFileException & { stderr?: string };
+		const blocked = typeof failure.code === "number" && looksBlocked(failure.stderr ?? "");
 		return {
-			kind: "error",
-			env: {},
-			dropped: [],
-			detail: "direnv could not be started",
-		};
-	}
-	if (run.timedOut) {
-		return {
-			kind: "error",
-			env: {},
-			dropped: [],
-			...(rcPath === undefined ? {} : { rcPath }),
-			detail: `direnv export timed out after ${config.probeTimeoutMs} ms`,
-		};
-	}
-	if (run.code !== 0) {
-		const blocked = looksBlocked(run.stderr);
-		return {
-			kind: blocked ? "blocked" : "error",
-			env: {},
-			dropped: [],
+			kind: blocked ? "blocked" : "error", env: {}, dropped: [],
 			...(rcPath === undefined ? {} : { rcPath }),
 			detail: blocked
 				? "the workspace .envrc is not approved; native direnv refused to load it"
-				: `direnv export exited with code ${String(run.code)}`,
+				: failure.killed && typeof failure.code !== "string"
+					? `direnv export timed out after ${config.probeTimeoutMs} ms`
+					: `direnv export failed (${String(failure.code)})`,
 		};
 	}
 
-	const diff = parseExport(run.stdout);
+	const diff = parseExport(stdout);
 	if (diff === undefined) {
 		return {
 			kind: "error",

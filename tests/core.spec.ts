@@ -1,6 +1,6 @@
 /**
- * Core unit tests: diff parsing, filtering, and refusals.
- * Everything here is pure or filesystem-local; no direnv and no host needed.
+ * Core tests: validation, command execution, diff parsing, and refusals.
+ * Command tests use the current Node binary; no direnv installation needed.
  */
 import {
 	mkdirSync,
@@ -20,6 +20,8 @@ import {
 	isAbsolutePath,
 	assertAbsolutePath,
 	parseExport,
+	runExport,
+	resolveStatus,
 	refuseAllow,
 	selectInjectable,
 	looksBlocked,
@@ -65,6 +67,43 @@ describe("absolute path validation", () => {
 		expect(path).toBe("/missing/.envrc");
 		for (const invalid of [null, 1, {}, "", ".envrc", "/ws/a\0b"])
 			expect(() => assertAbsolutePath(invalid)).toThrow("invalid path");
+	});
+});
+
+describe("native command execution", () => {
+	function command(body: string): string {
+		const workspace = scratch();
+		writeFileSync(join(workspace, "export"), body);
+		return workspace;
+	}
+	const config = { ...defaultConfig, executable: process.execPath };
+
+	it("closes stdin and collects output without a shell", async () => {
+		const workspace = command(
+			'process.stdin.on("end", () => process.stdout.write("{}")); process.stdin.resume();',
+		);
+		await expect(runExport(workspace, config)).resolves.toMatchObject({ stdout: "{}", stderr: "" });
+	});
+
+	it("keeps native exit errors but does not expose command output in status details", async () => {
+		const workspace = command(
+			'process.stdout.write("secret-value"); process.stderr.write("private-diagnostic"); process.exitCode = 7;',
+		);
+		await expect(runExport(workspace, config)).rejects.toMatchObject({
+			code: 7, stdout: "secret-value", stderr: "private-diagnostic",
+		});
+		const status = await resolveStatus(workspace, config, undefined);
+		expect(status.kind).toBe("error");
+		expect(status.env).toEqual({});
+		expect(status.detail).not.toContain("secret-value");
+		expect(status.detail).not.toContain("private-diagnostic");
+	});
+
+	it("uses the native stdout buffer limit", async () => {
+		const workspace = command('process.stdout.write("x".repeat(9 * 1024 * 1024));');
+		await expect(runExport(workspace, config)).rejects.toMatchObject({
+			code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
+		});
 	});
 });
 

@@ -23,11 +23,14 @@ import DirenvService from "../src/provider.js";
 import { requireRealProcesses } from "./helpers.js";
 import { installDirenvShellAdapter } from "../src/shell-adapter.js";
 
-vi.mock("node:child_process", async (importOriginal) => ({
-	...(await importOriginal<typeof import("node:child_process")>()),
-}));
+vi.mock("node:child_process", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("node:child_process")>();
+	const { mockExecFile } = await import("./process-fixture.js");
+	return { ...actual, execFile: mockExecFile(actual.execFile) };
+});
 afterEach(() => {
 	vi.restoreAllMocks();
+	vi.resetAllMocks();
 	vi.unstubAllEnvs();
 });
 
@@ -84,7 +87,7 @@ class FakeAgents extends Service {
 async function boot(box: Sandbox, overrides: Partial<DirenvConfig> = {}) {
 	for (const name of ["HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "DIRENV_CONFIG"])
 		vi.stubEnv(name, box.env[name]);
-	const spawn = vi.spyOn(ChildProcess, "spawn");
+	const exec = vi.mocked(ChildProcess.execFile);
 	const ctx = new Context();
 	ctx.provide("shell", {
 		resolve: () => ({}),
@@ -104,7 +107,7 @@ async function boot(box: Sandbox, overrides: Partial<DirenvConfig> = {}) {
 	return {
 		ctx,
 		get probes() {
-			return spawn.mock.calls.filter(([, args]) => args?.[0] === "export").length;
+			return exec.mock.calls.filter(([, args]) => args?.[0] === "export").length;
 		},
 		service: ctx.direnv,
 		async dispose() {

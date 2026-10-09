@@ -19,7 +19,7 @@ import type { UserMessage } from "@deepseek-ai/dsh-llm";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import * as Core from "../src/core.js";
 import * as ChildProcess from "node:child_process";
-import { completedChild } from "./process-fixture.js";
+import { completeCommand, type CommandResult } from "./process-fixture.js";
 import DirenvService, {
 	defaultConfig,
 	type DirenvConfig,
@@ -29,18 +29,20 @@ import {
 	SESSION_CONTEXT_PLUGIN,
 	sessionContextText,
 	type DirenvStatus,
-	type ExportRun,
 } from "../src/core.js";
 import {
 	injectSessionContext,
 	installDirenvSessionContext,
 } from "../src/session-context.js";
 
-vi.mock("node:child_process", async (importOriginal) => ({
-	...(await importOriginal<typeof import("node:child_process")>()),
-}));
+vi.mock("node:child_process", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("node:child_process")>();
+	const { mockExecFile } = await import("./process-fixture.js");
+	return { ...actual, execFile: mockExecFile(actual.execFile) };
+});
 afterEach(() => {
 	vi.restoreAllMocks();
+	vi.resetAllMocks();
 	vi.unstubAllEnvs();
 });
 
@@ -60,25 +62,21 @@ const flush = (): Promise<void> =>
 	new Promise((resolve) => setTimeout(resolve, 0));
 
 /** Return one `direnv export json` outcome. */
-function exported(diff: Record<string, string | null>): ExportRun {
+function exported(diff: Record<string, string | null>): CommandResult {
 	return {
 		code: 0,
 		signal: null,
 		stdout: JSON.stringify(diff),
 		stderr: "",
-		timedOut: false,
-		spawnFailed: false,
 	};
 }
 
-const BLOCKED_RUN: ExportRun = {
+const BLOCKED_RUN: CommandResult = {
 	code: 1,
 	signal: null,
 	stdout: "",
 	stderr:
 		"direnv: error /ws/.envrc is blocked. Run `direnv allow` to approve its content",
-	timedOut: false,
-	spawnFailed: false,
 };
 
 describe("sessionContextText", () => {
@@ -172,7 +170,7 @@ interface Booted {
 async function boot(
 	options: {
 		rcPath?: string;
-		probe?: () => ExportRun;
+		probe?: () => CommandResult;
 		config?: Partial<DirenvConfig>;
 	} = {},
 ): Promise<Booted> {
@@ -194,11 +192,13 @@ async function boot(
 	vi.stubEnv("XDG_CONFIG_HOME", join(root, "config"));
 	vi.stubEnv("XDG_CACHE_HOME", join(root, "cache"));
 	vi.stubEnv("DIRENV_CONFIG", join(root, "config", "direnv"));
-	const spawn = ChildProcess.spawn;
-	vi.spyOn(ChildProcess, "spawn").mockImplementation((command, args, opts) => {
-		if (args?.[0] !== "export") return spawn(command, args, opts);
+	const { execFile: exec } = await vi.importActual<typeof ChildProcess>("node:child_process");
+	vi.mocked(ChildProcess.execFile).mockImplementation((command, args, opts, callback) => {
+		if (args?.[0] !== "export") return exec(command, args, opts, callback);
 		probeCalls += 1;
-		return completedChild((options.probe ?? (() => exported({})))());
+		return completeCommand(
+			(options.probe ?? (() => exported({})))(), callback, new ChildProcess.ChildProcess(),
+		);
 	});
 	const config: DirenvConfig = { ...defaultConfig, ...options.config };
 	const fiber = await ctx.plugin(

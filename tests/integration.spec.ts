@@ -27,14 +27,17 @@ import DirenvService, {
 } from "../src/provider.js";
 import { requireRealProcesses } from "./helpers.js";
 import { installDirenvShellAdapter } from "../src/shell-adapter.js";
-import { readNativeStatus, type ExportRun } from "../src/core.js";
-import { completedChild } from "./process-fixture.js";
+import { readNativeStatus } from "../src/core.js";
+import { completeCommand, type CommandResult } from "./process-fixture.js";
 
-vi.mock("node:child_process", async (importOriginal) => ({
-	...(await importOriginal<typeof import("node:child_process")>()),
-}));
+vi.mock("node:child_process", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("node:child_process")>();
+	const { mockExecFile } = await import("./process-fixture.js");
+	return { ...actual, execFile: mockExecFile(actual.execFile) };
+});
 afterEach(() => {
 	vi.restoreAllMocks();
+	vi.resetAllMocks();
 	vi.unstubAllEnvs();
 });
 
@@ -254,13 +257,15 @@ class FakeAgents extends Service {
 async function boot(
 	box: Sandbox,
 	overrides: Partial<DirenvConfig> = {},
-	probe?: () => ExportRun,
+	probe?: () => CommandResult,
 ): Promise<Booted> {
 	useSandboxEnv(box);
 	if (probe !== undefined) {
-		const spawn = ChildProcess.spawn;
-		vi.spyOn(ChildProcess, "spawn").mockImplementation((command, args, opts) =>
-			args?.[0] === "export" ? completedChild(probe()) : spawn(command, args, opts),
+		const { execFile: exec } = await vi.importActual<typeof ChildProcess>("node:child_process");
+		vi.mocked(ChildProcess.execFile).mockImplementation((command, args, opts, callback) =>
+			args?.[0] === "export"
+				? completeCommand(probe(), callback, new ChildProcess.ChildProcess())
+				: exec(command, args, opts, callback),
 		);
 	}
 	const ctx = new Context();
@@ -335,7 +340,7 @@ describeReal("native RC discovery", () => {
 		await expect(readNativeStatus(box.workspace, {
 			...defaultConfig,
 			executable: "/nonexistent/direnv",
-		})).rejects.toThrow("direnv could not be started");
+		})).rejects.toThrow("ENOENT");
 	});
 });
 
@@ -705,8 +710,6 @@ describeReal("direnv injection (real direnv)", () => {
 			signal: null,
 			stdout: "not json",
 			stderr: "",
-			timedOut: false,
-			spawnFailed: false,
 		});
 		const app = await boot(box, {}, probe);
 		try {
@@ -753,7 +756,7 @@ describeReal("direnv injection (real direnv)", () => {
 				)
 			).result();
 			expect(app2.shell.last().env).toBeUndefined();
-			expect(result.stderr.text).toContain("could not be started");
+			expect(result.stderr.text).toContain("ENOENT");
 		} finally {
 			await app2.dispose();
 			await app.dispose();

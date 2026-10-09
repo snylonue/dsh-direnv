@@ -20,6 +20,8 @@
  * @module dsh-direnv
  */
 import { dirname, resolve as resolvePath } from "node:path";
+import type { ExecFileException } from "node:child_process";
+import { execFileNoStdin } from "./process.js";
 import { Service, type Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import z from "@deepseek-ai/schemastery";
@@ -34,7 +36,6 @@ import {
 	isAbsolutePath,
 	refuseAllow,
 	resolveStatus,
-	runChild,
 	type DirenvConfig,
 	type DirenvStatus,
 	type InjectableEnv,
@@ -85,13 +86,6 @@ export interface ReloadReport {
 	reloaded: number;
 	/** One entry per re-resolved directory. */
 	changed: ReloadChange[];
-}
-
-/** One `direnv allow` child outcome. */
-export interface AllowRun {
-	code: number | null;
-	stdout: string;
-	stderr: string;
 }
 
 export default class DirenvService extends Service {
@@ -310,12 +304,14 @@ export default class DirenvService extends Service {
 	): Promise<{ ok: true } | { ok: false; reason: string }> {
 		const refusal = this.refusalFor(rcPath, workspace);
 		if (refusal !== undefined) return { ok: false, reason: refusal };
-		const result = await runAllow(rcPath, this.config);
-		if (result.code !== 0) {
-			const detail = firstLine(result.stderr);
+		try {
+			await runAllow(rcPath, this.config);
+		} catch (error) {
+			const failure = error as ExecFileException & { stderr?: string };
+			const detail = firstLine(failure.stderr ?? "");
 			return {
 				ok: false,
-				reason: `direnv allow exited with code ${String(result.code)}${detail.length === 0 ? "" : `: ${detail}`}`,
+				reason: `direnv allow exited with code ${String(failure.code)}${detail.length === 0 ? "" : `: ${detail}`}`,
 			};
 		}
 		// The approval just changed direnv's authorization, so every cached answer
@@ -354,12 +350,12 @@ export function firstLine(text: string): string {
 export async function runAllow(
 	rcPath: string,
 	config: DirenvConfig,
-): Promise<AllowRun> {
-	const result = await runChild(config.executable, ["allow", rcPath], {
-		cwd: process.cwd(),
-		env: process.env,
-		timeoutMs: config.probeTimeoutMs,
-		maxBytes: 1024 * 1024,
+): Promise<void> {
+	await execFileNoStdin(config.executable, ["allow", rcPath], {
+		timeout: config.probeTimeoutMs,
+		maxBuffer: 1024 * 1024,
+		killSignal: "SIGKILL",
+		encoding: "utf8",
+		windowsHide: true,
 	});
-	return { code: result.code, stdout: result.stdout, stderr: result.stderr };
 }

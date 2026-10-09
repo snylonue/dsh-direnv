@@ -19,11 +19,13 @@ import DirenvService, {
 import * as AllowTool from "../src/tools.js";
 import * as Core from "../src/core.js";
 import * as ChildProcess from "node:child_process";
-import { completedChild } from "./process-fixture.js";
+import { completeCommand } from "./process-fixture.js";
 
-vi.mock("node:child_process", async (importOriginal) => ({
-	...(await importOriginal<typeof import("node:child_process")>()),
-}));
+vi.mock("node:child_process", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("node:child_process")>();
+	const { mockExecFile } = await import("./process-fixture.js");
+	return { ...actual, execFile: mockExecFile(actual.execFile) };
+});
 
 const created: string[] = [];
 function scratch(prefix = "dsh-direnv-allow-"): string {
@@ -33,6 +35,7 @@ function scratch(prefix = "dsh-direnv-allow-"): string {
 }
 afterEach(() => {
 	vi.restoreAllMocks();
+	vi.resetAllMocks();
 	for (const dir of created.splice(0))
 		rmSync(dir, { recursive: true, force: true });
 });
@@ -177,25 +180,19 @@ async function harness(
 		stdout: "",
 		stderr: options.allowStderr ?? "",
 	}));
-	vi.spyOn(Core, "runChild").mockImplementation(async (_executable, args) => {
-		expect(args[0]).toBe("allow");
-		return {
-			...allowSpy(String(args[1])),
-			signal: null,
-			timedOut: false,
-			spawnFailed: false,
-		};
-	});
 	vi.spyOn(Core, "readNativeStatus").mockResolvedValue({ path: rcPath, allowed: 0 });
-	const spawn = ChildProcess.spawn;
-	vi.spyOn(ChildProcess, "spawn").mockImplementation((command, args, opts) => {
-		if (args?.[0] !== "export") return spawn(command, args, opts);
+	const { execFile: exec } = await vi.importActual<typeof ChildProcess>("node:child_process");
+	vi.mocked(ChildProcess.execFile).mockImplementation((command, args, opts, callback) => {
+		if (args?.[0] === "allow")
+			return completeCommand(
+				{ ...allowSpy(String(args[1])), signal: null }, callback, new ChildProcess.ChildProcess(),
+			);
+		if (args?.[0] !== "export") return exec(command, args, opts, callback);
 		const dir = String(opts?.cwd);
 		options.probed?.push(dir);
-		return completedChild({
-			code: 0, signal: null, stdout: options.exportFor?.(dir) ?? "{}",
-			stderr: "", timedOut: false, spawnFailed: false,
-		});
+		return completeCommand({
+			code: 0, signal: null, stdout: options.exportFor?.(dir) ?? "{}", stderr: "",
+		}, callback, new ChildProcess.ChildProcess());
 	});
 	const providerFiber = await ctx.plugin(
 		class extends DirenvService {
