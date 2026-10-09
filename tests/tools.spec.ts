@@ -18,6 +18,12 @@ import DirenvService, {
 } from "../src/provider.js";
 import * as AllowTool from "../src/tools.js";
 import * as Core from "../src/core.js";
+import * as ChildProcess from "node:child_process";
+import { completedChild } from "./process-fixture.js";
+
+vi.mock("node:child_process", async (importOriginal) => ({
+	...(await importOriginal<typeof import("node:child_process")>()),
+}));
 
 const created: string[] = [];
 function scratch(prefix = "dsh-direnv-allow-"): string {
@@ -180,26 +186,21 @@ async function harness(
 			spawnFailed: false,
 		};
 	});
+	vi.spyOn(Core, "readNativeStatus").mockResolvedValue({ path: rcPath, allowed: 0 });
+	const spawn = ChildProcess.spawn;
+	vi.spyOn(ChildProcess, "spawn").mockImplementation((command, args, opts) => {
+		if (args?.[0] !== "export") return spawn(command, args, opts);
+		const dir = String(opts?.cwd);
+		options.probed?.push(dir);
+		return completedChild({
+			code: 0, signal: null, stdout: options.exportFor?.(dir) ?? "{}",
+			stderr: "", timedOut: false, spawnFailed: false,
+		});
+	});
 	const providerFiber = await ctx.plugin(
 		class extends DirenvService {
 			constructor(applyCtx: Context) {
-				super(
-					applyCtx,
-					{ ...defaultConfig, ...options.config },
-					{
-						runExport: (dir: string) => {
-							options.probed?.push(dir);
-							return {
-								code: 0,
-								signal: null,
-								stdout: options.exportFor?.(dir) ?? "{}",
-								stderr: "",
-								timedOut: false,
-								spawnFailed: false,
-							};
-						},
-					},
-				);
+				super(applyCtx, { ...defaultConfig, ...options.config });
 			}
 		},
 	);

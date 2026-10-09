@@ -8,20 +8,28 @@
  * @module tests/cache
  */
 import { spawnSync } from "node:child_process";
+import * as ChildProcess from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Context, Service } from "@deepseek-ai/cordis";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import {
 	envNames,
 	defaultConfig,
 	type DirenvConfig,
-	type ExportConfig,
 } from "../src/provider.js";
 import DirenvService from "../src/provider.js";
 import { requireRealProcesses } from "./helpers.js";
 import { installDirenvShellAdapter } from "../src/shell-adapter.js";
+
+vi.mock("node:child_process", async (importOriginal) => ({
+	...(await importOriginal<typeof import("node:child_process")>()),
+}));
+afterEach(() => {
+	vi.restoreAllMocks();
+	vi.unstubAllEnvs();
+});
 
 const describeReal = requireRealProcesses("real-direnv tests")
 	? describe
@@ -50,6 +58,7 @@ function sandbox(): Sandbox {
 			HOME: home,
 			XDG_DATA_HOME: data,
 			XDG_CONFIG_HOME: conf,
+			DIRENV_CONFIG: join(conf, "direnv"),
 			XDG_CACHE_HOME: cache,
 		},
 	};
@@ -73,36 +82,20 @@ class FakeAgents extends Service {
 
 /** Boot the service with a counting probe, all in the sandbox environment. */
 async function boot(box: Sandbox, overrides: Partial<DirenvConfig> = {}) {
+	for (const name of ["HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "DIRENV_CONFIG"])
+		vi.stubEnv(name, box.env[name]);
+	const spawn = vi.spyOn(ChildProcess, "spawn");
 	const ctx = new Context();
 	ctx.provide("shell", {
 		resolve: () => ({}),
 		execute: () => Promise.resolve({}),
 	});
 	const agentsFiber = await ctx.plugin(FakeAgents);
-	let probes = 0;
 	const config: DirenvConfig = { ...defaultConfig, ...overrides };
 	const fiber = await ctx.plugin(
 		class extends DirenvService {
 			constructor(applyCtx: Context) {
-				super(applyCtx, config, {
-					env: box.env,
-					runExport: (dir: string, cfg: ExportConfig) => {
-						probes += 1;
-						const r = spawnSync(cfg.executable, ["export", "json"], {
-							cwd: dir,
-							env: box.env,
-							encoding: "utf8",
-						});
-						return {
-							code: r.status,
-							signal: r.signal,
-							stdout: r.stdout ?? "",
-							stderr: r.stderr ?? "",
-							timedOut: false,
-							spawnFailed: r.error !== undefined,
-						};
-					},
-				});
+				super(applyCtx, config);
 			}
 		},
 	);
@@ -111,7 +104,7 @@ async function boot(box: Sandbox, overrides: Partial<DirenvConfig> = {}) {
 	return {
 		ctx,
 		get probes() {
-			return probes;
+			return spawn.mock.calls.filter(([, args]) => args?.[0] === "export").length;
 		},
 		service: ctx.direnv,
 		async dispose() {

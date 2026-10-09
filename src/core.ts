@@ -239,18 +239,6 @@ export interface ExportRun {
 	spawnFailed: boolean;
 }
 
-/** The config one probe runs under, including the environment it inherits. */
-export interface ExportConfig extends DirenvConfig {
-	/** Environment for the direnv child; defaults to the harness process's own. */
-	env?: NodeJS.ProcessEnv;
-}
-
-/** Injectable probe seam so activation and status are testable without a host. */
-export type ExportRunner = (
-	workspace: string,
-	config: ExportConfig,
-) => ExportRun | Promise<ExportRun>;
-
 /**
  * Run one fixed-argv child without blocking the event loop. `shell` is never
  * used: the executable and argv are the caller's, and the directory travels as
@@ -360,18 +348,18 @@ export function runChild(
  * Run `direnv export json` in `workspace`. `export json` prints the DIFF direnv
  * would apply, which is exactly the injection this plugin performs.
  */
-export const runExport: ExportRunner = async (
-	workspace,
-	config: ExportConfig,
-) => {
+export async function runExport(
+	workspace: string,
+	config: DirenvConfig,
+): Promise<ExportRun> {
 	assertAbsolutePath(workspace);
 	return runChild(config.executable, ["export", "json"], {
 		cwd: workspace,
-		env: config.env ?? process.env,
+		env: process.env,
 		timeoutMs: config.probeTimeoutMs,
 		maxBytes: 8 * 1024 * 1024,
 	});
-};
+}
 
 /** The RC selected by native direnv, with its native authorization status. */
 export interface NativeRc {
@@ -382,12 +370,12 @@ export interface NativeRc {
 /** Let direnv own RC discovery. No RC is null; command or format errors throw. */
 export async function readNativeStatus(
 	workspace: string,
-	config: ExportConfig,
+	config: DirenvConfig,
 ): Promise<NativeRc | null> {
 	assertAbsolutePath(workspace);
 	const result = await runChild(config.executable, ["status", "--json"], {
 		cwd: workspace,
-		env: config.env ?? process.env,
+		env: process.env,
 		timeoutMs: config.probeTimeoutMs,
 		maxBytes: 1024 * 1024,
 	});
@@ -552,21 +540,6 @@ export function hasAppliedEntries(diff: Record<string, DiffEntry>): boolean {
 	return Object.keys(diff).some((name) => !name.startsWith("DIRENV_"));
 }
 
-/** Runtime options for the export runner and child environment. */
-export interface DirenvRuntime {
-	runExport?: ExportRunner;
-	/**
-	 * The environment every direnv child runs under, and the one that decides
-	 * which allow/deny store a cache stamp describes.
-	 *
-	 * Both must come from here rather than from `process.env` independently:
-	 * `direnv export` resolves its store from `XDG_DATA_HOME`/`HOME`, so a stamp
-	 * computed against a different environment would describe a store the probe
-	 * never consulted, and an external `direnv allow` would go unnoticed.
-	 */
-	env?: NodeJS.ProcessEnv;
-}
-
 /**
  * Resolve one workspace's export using the RC path selected by native status.
  * Ask direnv for the diff and project it into an injectable map. Native
@@ -576,12 +549,11 @@ export interface DirenvRuntime {
  */
 export async function resolveStatus(
 	workspace: string,
-	config: ExportConfig,
+	config: DirenvConfig,
 	rcPath: string | undefined,
-	runtime: DirenvRuntime = {},
 ): Promise<DirenvStatus> {
 	if (!config.enabled) return { kind: "disabled", env: {}, dropped: [] };
-	const run = await (runtime.runExport ?? runExport)(workspace, config);
+	const run = await runExport(workspace, config);
 
 	if (run.spawnFailed) {
 		return {
@@ -634,7 +606,7 @@ export async function resolveStatus(
 		// one; only the deny store distinguishes them, so an empty .envrc is
 		// reported as "nothing to inject" rather than as an error the user must act
 		// on. `unset`-only diffs are non-empty here and therefore still inject.
-		if (!isDenied(rcPath, config.env)) {
+		if (!isDenied(rcPath)) {
 			return { kind: "no-rc", rcPath, env, dropped };
 		}
 		return {

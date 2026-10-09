@@ -10,6 +10,7 @@
  * @module tests/integration
  */
 import { spawnSync } from "node:child_process";
+import * as ChildProcess from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,14 +20,23 @@ import type {
 	ShellExecSpec,
 	ShellExecution,
 } from "@deepseek-ai/dsh-shell";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import DirenvService, {
 	defaultConfig,
 	type DirenvConfig,
 } from "../src/provider.js";
 import { requireRealProcesses } from "./helpers.js";
 import { installDirenvShellAdapter } from "../src/shell-adapter.js";
-import { readNativeStatus } from "../src/core.js";
+import { readNativeStatus, type ExportRun } from "../src/core.js";
+import { completedChild } from "./process-fixture.js";
+
+vi.mock("node:child_process", async (importOriginal) => ({
+	...(await importOriginal<typeof import("node:child_process")>()),
+}));
+afterEach(() => {
+	vi.restoreAllMocks();
+	vi.unstubAllEnvs();
+});
 
 /** One isolated direnv sandbox: workspace plus private HOME and XDG roots. */
 interface Sandbox {
@@ -71,8 +81,15 @@ function direnvEnv(box: Sandbox): NodeJS.ProcessEnv {
 		HOME: box.home,
 		XDG_DATA_HOME: box.data,
 		XDG_CONFIG_HOME: box.config,
+		DIRENV_CONFIG: join(box.config, "direnv"),
 		XDG_CACHE_HOME: box.cache,
 	};
+}
+
+function useSandboxEnv(box: Sandbox): void {
+	const env = direnvEnv(box);
+	for (const name of ["HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "DIRENV_CONFIG"])
+		vi.stubEnv(name, env[name]);
 }
 
 /** Authorize one RC file with the REAL direnv, in this sandbox's own store. */
@@ -100,24 +117,6 @@ function writeRc(
 	writeFileSync(rcPath, body);
 	if (allow) allowWithRealDirenv(box, rcPath);
 	return rcPath;
-}
-
-/** Run the real direnv export in one sandbox, with its isolated store. */
-function exportIn(box: Sandbox, dir: string, config: DirenvConfig) {
-	const result = spawnSync(config.executable, ["export", "json"], {
-		cwd: dir,
-		env: direnvEnv(box),
-		timeout: config.probeTimeoutMs,
-		encoding: "utf8",
-	});
-	return {
-		code: result.status,
-		signal: result.signal,
-		stdout: result.stdout ?? "",
-		stderr: result.stderr ?? "",
-		timedOut: false,
-		spawnFailed: result.error !== undefined,
-	};
 }
 
 afterAll(() => {
@@ -255,8 +254,15 @@ class FakeAgents extends Service {
 async function boot(
 	box: Sandbox,
 	overrides: Partial<DirenvConfig> = {},
-	runExport?: () => never,
+	probe?: () => ExportRun,
 ): Promise<Booted> {
+	useSandboxEnv(box);
+	if (probe !== undefined) {
+		const spawn = ChildProcess.spawn;
+		vi.spyOn(ChildProcess, "spawn").mockImplementation((command, args, opts) =>
+			args?.[0] === "export" ? completedChild(probe()) : spawn(command, args, opts),
+		);
+	}
 	const ctx = new Context();
 	provideShell(ctx, new RecordingShell());
 	const agents = await ctx.plugin(FakeAgents);
@@ -264,14 +270,7 @@ async function boot(
 	const serviceFiber = await ctx.plugin(
 		class extends DirenvService {
 			constructor(applyCtx: Context) {
-				// The sandbox environment travels through the runtime seam, so the probe
-				// and the cache stamp always describe the same direnv store.
-				super(applyCtx, config, {
-					env: direnvEnv(box),
-					...(runExport === undefined
-						? { runExport: (dir, cfg) => exportIn(box, dir, cfg) }
-						: { runExport }),
-				});
+				super(applyCtx, config);
 			}
 		},
 	);
@@ -298,44 +297,44 @@ const describeReal = requireRealProcesses("real-direnv tests")
 describeReal("native RC discovery", () => {
 	it("finds the nearest ancestor RC without evaluating it", async () => {
 		const box = sandbox();
+		useSandboxEnv(box);
 		const rootRc = writeRc(box, ".", "exit 77\n");
 		const sub = join(box.workspace, "packages", "api");
 		mkdirSync(sub, { recursive: true });
-		const config = { ...defaultConfig, env: direnvEnv(box) };
-		const root = await readNativeStatus(sub, config);
+		const root = await readNativeStatus(sub, defaultConfig);
 		expect(root?.path).toBe(rootRc);
 		const nearerRc = join(box.workspace, "packages", ".envrc");
 		writeFileSync(nearerRc, "exit 88\n");
-		const nearer = await readNativeStatus(sub, config);
+		const nearer = await readNativeStatus(sub, defaultConfig);
 		expect(nearer?.path).toBe(nearerRc);
 	});
 
 	it("honors native load_dotenv and .envrc precedence", async () => {
 		const box = sandbox();
+		useSandboxEnv(box);
 		const dotenv = join(box.workspace, ".env");
 		writeFileSync(dotenv, "A=1\n");
-		const config = { ...defaultConfig, env: direnvEnv(box) };
-		const disabled = await readNativeStatus(box.workspace, config);
+		const disabled = await readNativeStatus(box.workspace, defaultConfig);
 		expect(disabled?.path).not.toBe(dotenv);
 		mkdirSync(join(box.config, "direnv"), { recursive: true });
 		writeFileSync(
 			join(box.config, "direnv", "direnv.toml"),
 			"[global]\nload_dotenv = true\n",
 		);
-		const enabled = await readNativeStatus(box.workspace, config);
+		const enabled = await readNativeStatus(box.workspace, defaultConfig);
 		expect(enabled?.path).toBe(dotenv);
 		const rc = writeRc(box, ".", "export A=2\n", false);
-		const preferred = await readNativeStatus(box.workspace, config);
+		const preferred = await readNativeStatus(box.workspace, defaultConfig);
 		expect(preferred?.path).toBe(rc);
 	});
 
 	it("reports a status failure instead of falling back to custom discovery", async () => {
 		const box = sandbox();
+		useSandboxEnv(box);
 		writeRc(box, ".", "export A=1\n", false);
 		await expect(readNativeStatus(box.workspace, {
 			...defaultConfig,
 			executable: "/nonexistent/direnv",
-			env: direnvEnv(box),
 		})).rejects.toThrow("direnv could not be started");
 	});
 });
@@ -709,7 +708,7 @@ describeReal("direnv injection (real direnv)", () => {
 			timedOut: false,
 			spawnFailed: false,
 		});
-		const app = await boot(box, {}, probe as never);
+		const app = await boot(box, {}, probe);
 		try {
 			const result = await (
 				await app.ctx.shell.execute(app.ctx.shell.resolve({ command: "true" }))
@@ -723,16 +722,8 @@ describeReal("direnv injection (real direnv)", () => {
 
 	it("reports a direnv timeout as an error instead of injecting", async () => {
 		const box = sandbox();
-		writeRc(box, ".", "export X=1\n");
-		const probe = () => ({
-			code: null,
-			signal: "SIGKILL" as const,
-			stdout: "",
-			stderr: "",
-			timedOut: true,
-			spawnFailed: false,
-		});
-		const app = await boot(box, {}, probe as never);
+		writeRc(box, ".", "sleep 1\nexport X=1\n");
+		const app = await boot(box, { probeTimeoutMs: 100 });
 		try {
 			const result = await (
 				await app.ctx.shell.execute(app.ctx.shell.resolve({ command: "true" }))
@@ -793,16 +784,7 @@ describe("adapter installation against a shell provider with no execute", () => 
 		const service = await ctx.plugin(
 			class extends DirenvService {
 				constructor(applyCtx: Context) {
-					super(
-						applyCtx,
-						{ ...defaultConfig },
-						{
-							env: { ...process.env },
-							runExport: () => {
-								throw new Error("unused");
-							},
-						},
-					);
+					super(applyCtx, { ...defaultConfig });
 				}
 			},
 		);

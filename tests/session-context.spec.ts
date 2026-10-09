@@ -18,6 +18,8 @@ import { emitAgentEvent } from "@deepseek-ai/dsh-agent";
 import type { UserMessage } from "@deepseek-ai/dsh-llm";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import * as Core from "../src/core.js";
+import * as ChildProcess from "node:child_process";
+import { completedChild } from "./process-fixture.js";
 import DirenvService, {
 	defaultConfig,
 	type DirenvConfig,
@@ -26,7 +28,6 @@ import {
 	SESSION_CONTEXT_MAX_NAMES,
 	SESSION_CONTEXT_PLUGIN,
 	sessionContextText,
-	type DirenvRuntime,
 	type DirenvStatus,
 	type ExportRun,
 } from "../src/core.js";
@@ -35,7 +36,13 @@ import {
 	installDirenvSessionContext,
 } from "../src/session-context.js";
 
-afterEach(() => vi.restoreAllMocks());
+vi.mock("node:child_process", async (importOriginal) => ({
+	...(await importOriginal<typeof import("node:child_process")>()),
+}));
+afterEach(() => {
+	vi.restoreAllMocks();
+	vi.unstubAllEnvs();
+});
 
 const roots: string[] = [];
 function scratch(): string {
@@ -182,18 +189,22 @@ async function boot(
 	const ctx = new Context();
 	ctx.provide("shell", {} as never);
 	let probeCalls = 0;
-	const runtime: DirenvRuntime = {
-		env: { ...process.env, HOME: root, XDG_DATA_HOME: join(root, "data") },
-		runExport: () => {
-			probeCalls += 1;
-			return (options.probe ?? (() => exported({})))();
-		},
-	};
+	vi.stubEnv("HOME", root);
+	vi.stubEnv("XDG_DATA_HOME", join(root, "data"));
+	vi.stubEnv("XDG_CONFIG_HOME", join(root, "config"));
+	vi.stubEnv("XDG_CACHE_HOME", join(root, "cache"));
+	vi.stubEnv("DIRENV_CONFIG", join(root, "config", "direnv"));
+	const spawn = ChildProcess.spawn;
+	vi.spyOn(ChildProcess, "spawn").mockImplementation((command, args, opts) => {
+		if (args?.[0] !== "export") return spawn(command, args, opts);
+		probeCalls += 1;
+		return completedChild((options.probe ?? (() => exported({})))());
+	});
 	const config: DirenvConfig = { ...defaultConfig, ...options.config };
 	const fiber = await ctx.plugin(
 		class extends DirenvService {
 			constructor(applyCtx: Context) {
-				super(applyCtx, config, runtime);
+				super(applyCtx, config);
 			}
 		},
 	);

@@ -36,9 +36,7 @@ import {
 	resolveStatus,
 	runChild,
 	type DirenvConfig,
-	type DirenvRuntime,
 	type DirenvStatus,
-	type ExportConfig,
 	type InjectableEnv,
 	type NativeRc,
 } from "./core.js";
@@ -53,7 +51,6 @@ declare module "@deepseek-ai/cordis" {
 export type {
 	DirenvConfig,
 	DirenvStatus,
-	ExportConfig,
 	InjectableEnv,
 } from "./core.js";
 export { defaultConfig } from "./core.js";
@@ -125,7 +122,6 @@ export default class DirenvService extends Service {
 	constructor(
 		ctx: Context,
 		private readonly config: DirenvConfig = defaultConfig,
-		private readonly runtime: DirenvRuntime = {},
 	) {
 		super(ctx, "direnv");
 		assertDirenvConfig(config);
@@ -179,20 +175,11 @@ export default class DirenvService extends Service {
 	private readonly inflight = new Map<string, Promise<DirenvStatus>>();
 
 	/**
-	 * The environment every direnv child inherits. Read from the runtime seam so
-	 * the probe and the cache stamp can never disagree about which allow/deny
-	 * store they describe.
-	 */
-	private get direnvEnv(): NodeJS.ProcessEnv {
-		return this.runtime.env ?? process.env;
-	}
-
-	/**
 	 * Reuse the native status already obtained for this resolution; do not
 	 * start another status process when recording or rechecking the stamp.
 	 */
 	private stampFor(rc: NativeRc | null): string {
-		return `${JSON.stringify(rc)}:${cacheStamp(rc?.path, this.direnvEnv)}`;
+		return `${JSON.stringify(rc)}:${cacheStamp(rc?.path)}`;
 	}
 
 	/**
@@ -203,14 +190,9 @@ export default class DirenvService extends Service {
 	 */
 	async statusFor(probeDir: string): Promise<DirenvStatus> {
 		if (!this.config.enabled) return { kind: "disabled", env: {}, dropped: [] };
-		const { env, ...runtime } = this.runtime;
-		const probeConfig: ExportConfig = {
-			...this.config,
-			...(env === undefined ? {} : { env }),
-		};
 		let rc: NativeRc | null;
 		try {
-			rc = await readNativeStatus(probeDir, probeConfig);
+			rc = await readNativeStatus(probeDir, this.config);
 		} catch (error) {
 			return {
 				kind: "error", env: {}, dropped: [],
@@ -218,7 +200,7 @@ export default class DirenvService extends Service {
 			};
 		}
 		if (!this.config.cache)
-			return resolveStatus(probeDir, probeConfig, rc?.path, runtime);
+			return resolveStatus(probeDir, this.config, rc?.path);
 
 		const stamp = this.stampFor(rc);
 		const hit = this.cache.get(probeDir);
@@ -227,7 +209,7 @@ export default class DirenvService extends Service {
 		const key = `${probeDir}\u0000${stamp}`;
 		const pending =
 			this.inflight.get(key) ??
-			resolveStatus(probeDir, probeConfig, rc?.path, runtime);
+			resolveStatus(probeDir, this.config, rc?.path);
 		this.inflight.set(key, pending);
 		let status: DirenvStatus;
 		try {
@@ -328,7 +310,7 @@ export default class DirenvService extends Service {
 	): Promise<{ ok: true } | { ok: false; reason: string }> {
 		const refusal = this.refusalFor(rcPath, workspace);
 		if (refusal !== undefined) return { ok: false, reason: refusal };
-		const result = await runAllow(rcPath, { ...this.config, env: this.direnvEnv });
+		const result = await runAllow(rcPath, this.config);
 		if (result.code !== 0) {
 			const detail = firstLine(result.stderr);
 			return {
@@ -371,11 +353,11 @@ export function firstLine(text: string): string {
 /** Run `direnv allow <rcPath>` with a fixed argv and no shell, without blocking. */
 export async function runAllow(
 	rcPath: string,
-	config: ExportConfig,
+	config: DirenvConfig,
 ): Promise<AllowRun> {
 	const result = await runChild(config.executable, ["allow", rcPath], {
 		cwd: process.cwd(),
-		env: config.env ?? process.env,
+		env: process.env,
 		timeoutMs: config.probeTimeoutMs,
 		maxBytes: 1024 * 1024,
 	});
