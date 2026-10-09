@@ -29,7 +29,7 @@ import {
 	cacheStamp,
 	defaultConfig,
 	describeStatus,
-	findRcPath,
+	readNativeStatus,
 	isExistingDirectory,
 	refuseAllow,
 	resolveStatus,
@@ -39,6 +39,7 @@ import {
 	type DirenvStatus,
 	type ExportConfig,
 	type InjectableEnv,
+	type NativeRc,
 } from "./core.js";
 
 declare module "@deepseek-ai/cordis" {
@@ -166,8 +167,8 @@ export default class DirenvService extends Service {
 
 	/**
 	 * One cached resolution. `stamp` covers the RC file and direnv's own
-	 * allow/deny stores, so every way the answer can change is observed without
-	 * running direnv.
+	 * allow/deny stores. Native status supplies the RC path and authorization
+	 * state; a cache hit avoids running export, not the lightweight status query.
 	 */
 	private readonly cache = new Map<
 		string,
@@ -187,12 +188,11 @@ export default class DirenvService extends Service {
 	}
 
 	/**
-	 * The stamp a cache entry for `probeDir` is valid under. Cheap: two stats
-	 * plus, when an RC governs the directory, one more.
+	 * Reuse the native status already obtained for this resolution; do not
+	 * start another status process when recording or rechecking the stamp.
 	 */
-	private stampFor(probeDir: string): string {
-		const find = this.runtime.findRcPath ?? findRcPath;
-		return cacheStamp(find(probeDir), this.direnvEnv);
+	private stampFor(rc: NativeRc | null): string {
+		return `${JSON.stringify(rc)}:${cacheStamp(rc?.path, this.direnvEnv)}`;
 	}
 
 	/**
@@ -208,16 +208,26 @@ export default class DirenvService extends Service {
 			...this.config,
 			...(env === undefined ? {} : { env }),
 		};
+		let rc: NativeRc | null;
+		try {
+			rc = await readNativeStatus(probeDir, probeConfig);
+		} catch (error) {
+			return {
+				kind: "error", env: {}, dropped: [],
+				detail: error instanceof Error ? error.message : String(error),
+			};
+		}
 		if (!this.config.cache)
-			return resolveStatus(probeDir, probeConfig, runtime);
+			return resolveStatus(probeDir, probeConfig, rc?.path, runtime);
 
-		const stamp = this.stampFor(probeDir);
+		const stamp = this.stampFor(rc);
 		const hit = this.cache.get(probeDir);
 		if (hit !== undefined && hit.stamp === stamp) return hit.status;
 
 		const key = `${probeDir}\u0000${stamp}`;
 		const pending =
-			this.inflight.get(key) ?? resolveStatus(probeDir, probeConfig, runtime);
+			this.inflight.get(key) ??
+			resolveStatus(probeDir, probeConfig, rc?.path, runtime);
 		this.inflight.set(key, pending);
 		let status: DirenvStatus;
 		try {
@@ -226,7 +236,7 @@ export default class DirenvService extends Service {
 			if (this.inflight.get(key) === pending) this.inflight.delete(key);
 		}
 		// A concurrent probe or an external change may have moved the stamp on.
-		if (this.stampFor(probeDir) === stamp)
+		if (this.stampFor(rc) === stamp)
 			this.cache.set(probeDir, { status, stamp });
 		return status;
 	}

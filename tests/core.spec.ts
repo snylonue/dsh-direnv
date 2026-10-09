@@ -1,5 +1,5 @@
 /**
- * Core unit tests: RC discovery, diff parsing, filtering, and refusals.
+ * Core unit tests: diff parsing, filtering, and refusals.
  * Everything here is pure or filesystem-local; no direnv and no host needed.
  */
 import {
@@ -16,7 +16,6 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as fs from "node:fs";
 import {
-	findRcPath,
 	isWithin,
 	parseExport,
 	refuseAllow,
@@ -43,67 +42,6 @@ afterEach(() => {
 	vi.restoreAllMocks();
 	for (const dir of created.splice(0))
 		rmSync(dir, { recursive: true, force: true });
-});
-
-describe("findRcPath", () => {
-	it("finds .envrc in the directory itself", () => {
-		const dir = scratch();
-		writeFileSync(join(dir, ".envrc"), "export A=1\n");
-		expect(findRcPath(dir)).toBe(join(dir, ".envrc"));
-	});
-
-	it("walks up to an ancestor, like native direnv", () => {
-		const root = scratch();
-		const deep = join(root, "packages", "api", "src");
-		mkdirSync(deep, { recursive: true });
-		writeFileSync(join(root, ".envrc"), "export A=1\n");
-		expect(findRcPath(deep)).toBe(join(root, ".envrc"));
-	});
-
-	it("prefers the nearest ancestor over a farther one", () => {
-		const root = scratch();
-		const mid = join(root, "packages");
-		mkdirSync(mid, { recursive: true });
-		writeFileSync(join(root, ".envrc"), "export ROOT=1\n");
-		writeFileSync(join(mid, ".envrc"), "export MID=1\n");
-		expect(findRcPath(mid)).toBe(join(mid, ".envrc"));
-	});
-
-	it("prefers .envrc over .env in the same directory", () => {
-		const dir = scratch();
-		writeFileSync(join(dir, ".env"), "A=1\n");
-		writeFileSync(join(dir, ".envrc"), "export A=1\n");
-		expect(findRcPath(dir)).toBe(join(dir, ".envrc"));
-	});
-
-	it("finds .env when no .envrc exists", () => {
-		const dir = scratch();
-		writeFileSync(join(dir, ".env"), "A=1\n");
-		expect(findRcPath(dir)).toBe(join(dir, ".env"));
-	});
-
-	it("returns undefined when nothing governs the directory", () => {
-		// A fresh temp dir has no RC; its ancestors are outside the temp root and
-		// overwhelmingly unlikely to carry one, which the assertion accepts.
-		const dir = scratch();
-		const found = findRcPath(dir);
-		expect(
-			found === undefined || found.endsWith(".envrc") || found.endsWith(".env"),
-		).toBe(true);
-		expect(found === undefined || !found.startsWith(dir)).toBe(true);
-	});
-
-	it("ignores a directory named .envrc", () => {
-		const dir = scratch();
-		mkdirSync(join(dir, ".envrc"));
-		const found = findRcPath(dir);
-		expect(found).not.toBe(join(dir, ".envrc"));
-	});
-
-	it("rejects a relative or NUL-bearing workspace", () => {
-		expect(() => findRcPath("relative/path")).toThrow(TypeError);
-		expect(() => findRcPath("/tmp/a\0b")).toThrow(TypeError);
-	});
 });
 
 describe("parseExport", () => {

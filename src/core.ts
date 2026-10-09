@@ -16,10 +16,8 @@ import { statSync } from "node:fs";
 // resolvePath is used by the deny-store hash, which mirrors direnv's own.
 import {
 	basename,
-	dirname,
 	isAbsolute,
 	join,
-	parse,
 	resolve as resolvePath,
 } from "node:path";
 import { realpathSync } from "node:fs";
@@ -37,7 +35,7 @@ export const SAFE_ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
  */
 export const MANAGED_ENV_PREFIX = DSH_ENV_PREFIX;
 
-/** The config file names native direnv looks for, nearest-first. */
+/** Supported RC basenames for explicit approval requests. */
 export const RC_NAMES = [".envrc", ".env"] as const;
 
 /** The plugin name carried on the session-start context message and its section. */
@@ -58,7 +56,7 @@ export interface DirenvConfig {
 	/** Whether workspace environment injection is active. */
 	enabled: boolean;
 	/**
-	 * Wall-clock budget for one `direnv export json` run, in milliseconds.
+	 * Wall-clock budget for each native status or export run, in milliseconds.
 	 * Exceeding it kills direnv and the command runs without injection.
 	 */
 	probeTimeoutMs: number;
@@ -93,12 +91,11 @@ export interface DirenvConfig {
 	/**
 	 * Whether to resolve each directory once and reuse the result.
 	 *
-	 * On, the first command in a directory pays for one `direnv export` and every
-	 * later command reads the cache. The cache is invalidated automatically when
+	 * On, each resolution checks native status, but only cache misses evaluate
+	 * `direnv export`. The cache is invalidated automatically when
 	 * the `.envrc` changes or when direnv's allow/deny store is rewritten
 	 * (including by a `direnv allow` run outside this harness), and on demand by
-	 * the `direnv_reload` tool. Off, every command pays the probe — roughly 35 ms
-	 * for an allowed `.envrc` — and no cache exists to reason about.
+	 * the `direnv_reload` tool. Off, every command runs export as well as status.
 	 */
 	cache: boolean;
 }
@@ -170,31 +167,6 @@ export function assertWorkspace(workspace: string): void {
 		throw new TypeError(
 			`dsh-direnv: workspace must be an absolute path: ${workspace}`,
 		);
-}
-
-/**
- * Walk from `workspace` to the filesystem root and return the nearest
- * `.envrc`/`.env`, matching native direnv's own search order. Returns
- * `undefined` when no file governs the directory.
- */
-export function findRcPath(workspace: string): string | undefined {
-	assertWorkspace(workspace);
-	let dir = workspace;
-	const root = parse(dir).root;
-	for (;;) {
-		for (const name of RC_NAMES) {
-			const candidate = join(dir, name);
-			try {
-				if (statSync(candidate).isFile()) return candidate;
-			} catch {
-				// Absent or unreadable: keep walking, exactly as direnv does.
-			}
-		}
-		if (dir === root) return undefined;
-		const parent = dirname(dir);
-		if (parent === dir) return undefined;
-		dir = parent;
-	}
 }
 
 /**
@@ -398,6 +370,44 @@ export const runExport: ExportRunner = async (
 	});
 };
 
+/** The RC selected by native direnv, with its native authorization status. */
+export interface NativeRc {
+	path: string;
+	allowed: number;
+}
+
+/** Let direnv own RC discovery. No RC is null; command or format errors throw. */
+export async function readNativeStatus(
+	workspace: string,
+	config: ExportConfig,
+): Promise<NativeRc | null> {
+	assertWorkspace(workspace);
+	const result = await runChild(config.executable, ["status", "--json"], {
+		cwd: workspace,
+		env: config.env ?? process.env,
+		timeoutMs: config.probeTimeoutMs,
+		maxBytes: 1024 * 1024,
+	});
+	if (result.timedOut)
+		throw new Error(`direnv status timed out after ${config.probeTimeoutMs} ms`);
+	if (result.spawnFailed)
+		throw new Error("direnv could not be started or its status output exceeded the limit");
+	if (result.code !== 0)
+		throw new Error(`direnv status exited with code ${String(result.code)}`);
+	try {
+		const rc = JSON.parse(result.stdout)?.state?.foundRC;
+		if (rc !== null && (
+			typeof rc?.path !== "string" ||
+			!isAbsolute(rc.path) ||
+			rc.path.includes("\0") ||
+			!Number.isInteger(rc.allowed)
+		)) throw new Error();
+		return rc;
+	} catch {
+		throw new Error("direnv status produced output this plugin could not parse");
+	}
+}
+
 /** One parsed diff entry: a value to set, or `null` meaning "unset me". */
 export type DiffEntry = string | null;
 
@@ -542,10 +552,9 @@ export function hasAppliedEntries(diff: Record<string, DiffEntry>): boolean {
 	return Object.keys(diff).some((name) => !name.startsWith("DIRENV_"));
 }
 
-/** Injectable seam: the export runner, the RC locator, and the child environment. */
+/** Runtime options for the export runner and child environment. */
 export interface DirenvRuntime {
 	runExport?: ExportRunner;
-	findRcPath?: (workspace: string) => string | undefined;
 	/**
 	 * The environment every direnv child runs under, and the one that decides
 	 * which allow/deny store a cache stamp describes.
@@ -559,8 +568,8 @@ export interface DirenvRuntime {
 }
 
 /**
- * Resolve one workspace's direnv state: locate the governing `.envrc`, ask
- * native direnv for the diff, and project it into an injectable map. Native
+ * Resolve one workspace's export using the RC path selected by native status.
+ * Ask direnv for the diff and project it into an injectable map. Native
  * direnv owns authorization — a file that was never allowed, or whose content
  * changed since it was allowed, is refused by direnv itself and this function
  * reports `blocked` without ever evaluating the file.
@@ -568,11 +577,10 @@ export interface DirenvRuntime {
 export async function resolveStatus(
 	workspace: string,
 	config: ExportConfig,
+	rcPath: string | undefined,
 	runtime: DirenvRuntime = {},
 ): Promise<DirenvStatus> {
 	if (!config.enabled) return { kind: "disabled", env: {}, dropped: [] };
-	const find = runtime.findRcPath ?? findRcPath;
-	const rcPath = find(workspace);
 	const run = await (runtime.runExport ?? runExport)(workspace, config);
 
 	if (run.spawnFailed) {

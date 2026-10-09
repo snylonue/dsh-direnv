@@ -2,20 +2,22 @@
  * Session-start context tests.
  *
  * The pure renderer is exercised directly; the injection path runs against the
- * REAL `DirenvService` with only its probe seam replaced, so the assertions
+ * REAL `DirenvService` with native status mocked and its export probe replaced,
+ * so the assertions
  * observe what a live `agent/created` would actually queue — without
  * needing the `direnv` binary or a shell.
  *
  * @module tests/session-context
  */
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import { emitAgentEvent } from "@deepseek-ai/dsh-agent";
 import type { UserMessage } from "@deepseek-ai/dsh-llm";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
+import * as Core from "../src/core.js";
 import DirenvService, {
 	defaultConfig,
 	type DirenvConfig,
@@ -32,6 +34,8 @@ import {
 	injectSessionContext,
 	installDirenvSessionContext,
 } from "../src/session-context.js";
+
+afterEach(() => vi.restoreAllMocks());
 
 const roots: string[] = [];
 function scratch(): string {
@@ -166,15 +170,20 @@ async function boot(
 	} = {},
 ): Promise<Booted> {
 	const root = scratch();
-	const workspace = join(root, "ws");
+	const workspace =
+		options.rcPath === undefined ? join(root, "ws") : dirname(options.rcPath);
 	mkdirSync(workspace, { recursive: true });
+	if (options.rcPath !== undefined) writeFileSync(options.rcPath, "");
+	vi.spyOn(Core, "readNativeStatus").mockImplementation(async (dir) =>
+		dir === workspace && options.rcPath !== undefined
+			? { path: options.rcPath, allowed: 0 }
+			: null,
+	);
 	const ctx = new Context();
 	ctx.provide("shell", {} as never);
-	const rcPath = options.rcPath;
 	let probeCalls = 0;
 	const runtime: DirenvRuntime = {
 		env: { ...process.env, HOME: root, XDG_DATA_HOME: join(root, "data") },
-		findRcPath: () => rcPath,
 		runExport: () => {
 			probeCalls += 1;
 			return (options.probe ?? (() => exported({})))();

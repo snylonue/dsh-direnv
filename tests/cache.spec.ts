@@ -237,6 +237,44 @@ describeReal("per-workspace cache", () => {
 		}
 	});
 
+	it("detects a new nearer RC after caching an ancestor", async () => {
+		const box = sandbox();
+		const rootRc = writeRc(box, "export ROOT=1\n");
+		const sub = join(box.ws, "pkg");
+		mkdirSync(sub);
+		const app = await boot(box);
+		try {
+			expect((await app.service.statusFor(sub)).rcPath).toBe(rootRc);
+			const rc = join(sub, ".envrc");
+			writeFileSync(rc, "export SUB=1\n");
+			spawnSync("direnv", ["allow", rc], { env: box.env });
+			const status = await app.service.statusFor(sub);
+			expect(status.rcPath).toBe(rc);
+			expect(envNames(status.env)).toEqual(["SUB"]);
+		} finally {
+			await app.dispose();
+		}
+	});
+
+	it("invalidates when native whitelist authorization changes", async () => {
+		const box = sandbox();
+		writeFileSync(join(box.ws, ".envrc"), "export WHITELISTED=1\n");
+		const app = await boot(box);
+		try {
+			expect((await app.service.statusFor(box.ws)).kind).toBe("blocked");
+			const configDir = join(box.root, "config", "direnv");
+			mkdirSync(configDir, { recursive: true });
+			writeFileSync(
+				join(configDir, "direnv.toml"),
+				`[whitelist]\nexact = [${JSON.stringify(box.ws)}]\n`,
+			);
+			expect((await app.service.statusFor(box.ws)).env.WHITELISTED).toBe("1");
+			expect(app.probes).toBe(2);
+		} finally {
+			await app.dispose();
+		}
+	});
+
 	it("probes every time when the cache is off", async () => {
 		const box = sandbox();
 		writeRc(box, "export V=1\n");

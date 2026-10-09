@@ -26,6 +26,7 @@ import DirenvService, {
 } from "../src/provider.js";
 import { requireRealProcesses } from "./helpers.js";
 import { installDirenvShellAdapter } from "../src/shell-adapter.js";
+import { readNativeStatus } from "../src/core.js";
 
 /** One isolated direnv sandbox: workspace plus private HOME and XDG roots. */
 interface Sandbox {
@@ -293,6 +294,51 @@ async function boot(
 const describeReal = requireRealProcesses("real-direnv tests")
 	? describe
 	: describe.skip;
+
+describeReal("native RC discovery", () => {
+	it("finds the nearest ancestor RC without evaluating it", async () => {
+		const box = sandbox();
+		const rootRc = writeRc(box, ".", "exit 77\n");
+		const sub = join(box.workspace, "packages", "api");
+		mkdirSync(sub, { recursive: true });
+		const config = { ...defaultConfig, env: direnvEnv(box) };
+		const root = await readNativeStatus(sub, config);
+		expect(root?.path).toBe(rootRc);
+		const nearerRc = join(box.workspace, "packages", ".envrc");
+		writeFileSync(nearerRc, "exit 88\n");
+		const nearer = await readNativeStatus(sub, config);
+		expect(nearer?.path).toBe(nearerRc);
+	});
+
+	it("honors native load_dotenv and .envrc precedence", async () => {
+		const box = sandbox();
+		const dotenv = join(box.workspace, ".env");
+		writeFileSync(dotenv, "A=1\n");
+		const config = { ...defaultConfig, env: direnvEnv(box) };
+		const disabled = await readNativeStatus(box.workspace, config);
+		expect(disabled?.path).not.toBe(dotenv);
+		mkdirSync(join(box.config, "direnv"), { recursive: true });
+		writeFileSync(
+			join(box.config, "direnv", "direnv.toml"),
+			"[global]\nload_dotenv = true\n",
+		);
+		const enabled = await readNativeStatus(box.workspace, config);
+		expect(enabled?.path).toBe(dotenv);
+		const rc = writeRc(box, ".", "export A=2\n", false);
+		const preferred = await readNativeStatus(box.workspace, config);
+		expect(preferred?.path).toBe(rc);
+	});
+
+	it("reports a status failure instead of falling back to custom discovery", async () => {
+		const box = sandbox();
+		writeRc(box, ".", "export A=1\n", false);
+		await expect(readNativeStatus(box.workspace, {
+			...defaultConfig,
+			executable: "/nonexistent/direnv",
+			env: direnvEnv(box),
+		})).rejects.toThrow("direnv could not be started");
+	});
+});
 
 describeReal("direnv injection (real direnv)", () => {
 	it("leaves a missing approval target for direnv to reject", async () => {

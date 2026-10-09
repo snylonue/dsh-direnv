@@ -74,11 +74,13 @@ gets its own notice pointing at `direnv status`; an empty one is treated as
 
 ## Caching and manual reload
 
-Each directory is resolved once and the answer is reused, so a workspace pays
-for one `direnv export` rather than one per command. The cache is keyed by the
-directory that selects the `.envrc`, and its validity is a cheap stamp over
-everything that can change the answer:
+Each resolution asks `direnv status --json` for the native RC path and
+authorization state, respecting direnv's configuration (including `load_dotenv`).
+This status query does not evaluate the RC. The export result is cached per
+directory, so unchanged commands avoid re-running `direnv export`. Cache checks
+reuse that native status and inspect:
 
+- the native RC path and authorization state;
 - the governing `.envrc` — its size and mtime (an edit also invalidates
   direnv's own content hash);
 - direnv's **allow and deny stores** — so a `direnv allow` or `direnv deny`
@@ -123,12 +125,12 @@ or removed. It only reads: it never approves a file and needs no user approval.
 |---|---|---|
 | `executable` | `direnv` | The direnv binary; must be on `PATH` or absolute. |
 | `enabled` | `true` | When off, the adapter is inert and no probe runs. |
-| `probeTimeoutMs` | `10000` | One `direnv export json` run is killed past this. |
+| `probeTimeoutMs` | `10000` | Each `direnv status --json` or `direnv export json` run is killed past this. |
 | `notifyOnBlocked` | `true` | Off keeps results byte-identical to an un-instrumented run. |
 | `sessionContext` | `true` | On, starting a session injects one model-facing snapshot naming the workspace's direnv variables (or why none loaded). Values are never included. |
 | `restrictAllowToWorkspace` | `true` | On, `direnv_allow` refuses any path outside the agent's workspace, including via `..` or a symlink. |
 | `followWorkdir` | `true` | On, a command run in `<ws>/packages/api` picks up *that* `.envrc`. Off, every command uses the session workspace root. |
-| `cache` | `true` | Resolve each directory once and reuse the result. The cache refreshes itself when the `.envrc` changes or when direnv's allow/deny store is rewritten, and `direnv_reload` forces a refresh. Off, every command pays the probe (about 35 ms for an allowed `.envrc`). |
+| `cache` | `true` | Resolve each directory once and reuse the result. The cache refreshes itself when the `.envrc` changes or when direnv's allow/deny store is rewritten, and `direnv_reload` forces a refresh. Each resolution still queries native status. Off, every command also runs export. |
 
 ## Installation
 
@@ -195,7 +197,7 @@ pnpm test        # builds, then runs vitest
 
 The suite runs in layers:
 
-- **pure core logic** — RC discovery, diff parsing, filtering, refusals, the
+- **pure core logic** — diff parsing, filtering, refusals, the
   cache stamp, the session-start context renderer, and the deny-store hash the
   plugin reproduces from direnv;
 - **the method chain**, including the non-LIFO disposal case a naive
