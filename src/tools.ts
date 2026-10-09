@@ -22,222 +22,306 @@
  *
  * @module dsh-direnv/tools
  */
-import { dirname } from 'node:path'
-import type { Context } from '@deepseek-ai/cordis'
-import { defineTool } from '@deepseek-ai/dsh-tools'
-import z from '@deepseek-ai/schemastery'
-import { previewRc } from './core.js'
-import { envNames } from './provider.js'
+import { dirname } from "node:path";
+import type { Context } from "@deepseek-ai/cordis";
+import { defineTool } from "@deepseek-ai/dsh-tools";
+import z from "@deepseek-ai/schemastery";
+import { previewRc } from "./core.js";
+import { envNames } from "./provider.js";
 
-export const name = 'direnv-tools'
+export const name = "direnv-tools";
 
 /**
  * The tool needs the registry, the prompt, the approval channel (optional at
  * load time — a missing channel fails the CALL closed, never the load), and
  * the direnv service that owns validation and `direnv allow`.
  */
-export const inject = ['tools', 'systemPrompt', 'direnv']
+export const inject = ["tools", "systemPrompt", "direnv"];
 
 /** No integration-local settings; behavior belongs to the provider row. */
 export interface Config {}
-export const Config = z.object({}) as z<Config>
+export const Config = z.object({}) as z<Config>;
 
 /** Indent a preview block so a multi-line `.envrc` stays readable in a one-line reason. */
-function indent(text: string, prefix = '    | '): string {
-  if (text.length === 0) return `${prefix}(empty file)`
-  return text
-    .split('\n')
-    .map((line) => `${prefix}${line}`)
-    .join('\n')
+function indent(text: string, prefix = "    | "): string {
+	if (text.length === 0) return `${prefix}(empty file)`;
+	return text
+		.split("\n")
+		.map((line) => `${prefix}${line}`)
+		.join("\n");
 }
 
 export function apply(ctx: Context): void {
-  ctx.tools.register(defineTool({
-    name: 'direnv_allow',
-    description: [
-      'Ask the user to approve a workspace direnv file (.envrc or .env) so its variables load into future commands.',
-      'Call it only when a command result carries a [dsh-direnv] blocked notice, or when the user explicitly asks.',
-      'The user sees the path, SHA-256, and a preview; approving covers exactly the current content, so editing the file afterwards needs a new approval.',
-    ].join(' '),
-    parameters: {
-      path: {
-        type: 'string',
-        required: true,
-        description: 'Absolute path of the .envrc or .env file named in the [dsh-direnv] notice.',
-      },
-      reason: {
-        type: 'string',
-        description: 'One short sentence explaining why this environment is needed.',
-      },
-    },
-    output: {
-      schema: {
-        oneOf: [
-          {
-            type: 'object',
-            additionalProperties: false,
-            properties: {
-              outcome: { type: 'string', required: true, const: 'approved' },
-              path: { type: 'string', required: true },
-              sha256: { type: 'string', required: true },
-              variables: { type: 'integer', required: true },
-              detail: { type: 'string', required: true },
-            },
-          },
-          {
-            type: 'object',
-            additionalProperties: false,
-            properties: {
-              outcome: { type: 'string', required: true, enum: ['rejected', 'cancelled', 'unavailable', 'refused'] },
-              path: { type: 'string', required: true },
-              detail: { type: 'string', required: true },
-            },
-          },
-        ],
-      },
-      render: (_args, value) => [{ type: 'text', text: value.detail }],
-    },
-    async execute(args, exec) {
-      const path = args.path
-      const workspace = exec.agent === undefined ? undefined : ctx.direnv.workspaceFor(exec.agent)
+	ctx.tools.register(
+		defineTool({
+			name: "direnv_allow",
+			description: [
+				"Ask the user to approve a workspace direnv file (.envrc or .env) so its variables load into future commands.",
+				"Call it only when a command result carries a [dsh-direnv] blocked notice, or when the user explicitly asks.",
+				"The user sees the path, SHA-256, and a preview; approving covers exactly the current content, so editing the file afterwards needs a new approval.",
+			].join(" "),
+			parameters: {
+				path: {
+					type: "string",
+					required: true,
+					description:
+						"Absolute path of the .envrc or .env file named in the [dsh-direnv] notice.",
+				},
+				reason: {
+					type: "string",
+					description:
+						"One short sentence explaining why this environment is needed.",
+				},
+			},
+			output: {
+				schema: {
+					oneOf: [
+						{
+							type: "object",
+							additionalProperties: false,
+							properties: {
+								outcome: { type: "string", required: true, const: "approved" },
+								path: { type: "string", required: true },
+								sha256: { type: "string", required: true },
+								variables: { type: "integer", required: true },
+								detail: { type: "string", required: true },
+							},
+						},
+						{
+							type: "object",
+							additionalProperties: false,
+							properties: {
+								outcome: {
+									type: "string",
+									required: true,
+									enum: ["rejected", "cancelled", "unavailable", "refused"],
+								},
+								path: { type: "string", required: true },
+								detail: { type: "string", required: true },
+							},
+						},
+					],
+				},
+				render: (_args, value) => [{ type: "text", text: value.detail }],
+			},
+			async execute(args, exec) {
+				const path = args.path;
+				const workspace =
+					exec.agent === undefined
+						? undefined
+						: ctx.direnv.workspaceFor(exec.agent);
 
-      // Validate BEFORE asking: never show a user a prompt for a path this
-      // plugin would refuse anyway.
-      const refusal = ctx.direnv.refusalFor(path, workspace)
-      if (refusal !== undefined) {
-        return { outcome: 'refused' as const, path, detail: `dsh-direnv: refusing to approve: ${refusal}` }
-      }
+				// Validate BEFORE asking: never show a user a prompt for a path this
+				// plugin would refuse anyway.
+				const refusal = ctx.direnv.refusalFor(path, workspace);
+				if (refusal !== undefined) {
+					return {
+						outcome: "refused" as const,
+						path,
+						detail: `dsh-direnv: refusing to approve: ${refusal}`,
+					};
+				}
 
-      if (exec.agent === undefined) {
-        return { outcome: 'unavailable' as const, path, detail: 'dsh-direnv: this call has no agent, so no user can be asked to approve it' }
-      }
-      const approval = ctx.get('approval')
-      if (approval === undefined) {
-        return { outcome: 'unavailable' as const, path, detail: 'dsh-direnv: no approval channel is composed, so the file cannot be approved' }
-      }
+				if (exec.agent === undefined) {
+					return {
+						outcome: "unavailable" as const,
+						path,
+						detail:
+							"dsh-direnv: this call has no agent, so no user can be asked to approve it",
+					};
+				}
+				const approval = ctx.get("approval");
+				if (approval === undefined) {
+					return {
+						outcome: "unavailable" as const,
+						path,
+						detail:
+							"dsh-direnv: no approval channel is composed, so the file cannot be approved",
+					};
+				}
 
-      const preview = previewRc(path, ctx.direnv.settings.previewBytes)
-      const reason = [
-        args.reason === undefined || args.reason.trim().length === 0 ? undefined : args.reason.trim(),
-        `Approve this direnv file so its environment loads into future commands?`,
-        `  path:   ${preview.path}`,
-        `  size:   ${preview.bytes} bytes`,
-        `  sha256: ${preview.sha256}`,
-        preview.truncated ? `  contents (first ${ctx.direnv.settings.previewBytes} bytes):` : '  contents:',
-        indent(preview.text),
-        'Approving authorizes exactly this content; editing the file afterwards requires a new approval.',
-      ].filter((part): part is string => part !== undefined).join('\n')
+				const preview = previewRc(path, ctx.direnv.settings.previewBytes);
+				const reason = [
+					args.reason === undefined || args.reason.trim().length === 0
+						? undefined
+						: args.reason.trim(),
+					`Approve this direnv file so its environment loads into future commands?`,
+					`  path:   ${preview.path}`,
+					`  size:   ${preview.bytes} bytes`,
+					`  sha256: ${preview.sha256}`,
+					preview.truncated
+						? `  contents (first ${ctx.direnv.settings.previewBytes} bytes):`
+						: "  contents:",
+					indent(preview.text),
+					"Approving authorizes exactly this content; editing the file afterwards requires a new approval.",
+				]
+					.filter((part): part is string => part !== undefined)
+					.join("\n");
 
-      const outcome = await approval.request({
-        agent: exec.agent,
-        toolName: 'direnv_allow',
-        callId: exec.callId,
-        reason,
-        signal: exec.signal,
-      })
+				const outcome = await approval.request({
+					agent: exec.agent,
+					toolName: "direnv_allow",
+					callId: exec.callId,
+					reason,
+					signal: exec.signal,
+				});
 
-      switch (outcome) {
-        case 'allowed-once': break
-        case 'rejected':
-          return { outcome: 'rejected' as const, path, detail: `dsh-direnv: the user rejected approving ${path}; the workspace environment stays unavailable` }
-        case 'cancelled':
-          return { outcome: 'cancelled' as const, path, detail: `dsh-direnv: approval for ${path} was cancelled; the workspace environment stays unavailable` }
-        case 'unavailable':
-          return { outcome: 'unavailable' as const, path, detail: `dsh-direnv: no approval answerer was reachable, so ${path} was not approved` }
-      }
+				switch (outcome) {
+					case "allowed-once":
+						break;
+					case "rejected":
+						return {
+							outcome: "rejected" as const,
+							path,
+							detail: `dsh-direnv: the user rejected approving ${path}; the workspace environment stays unavailable`,
+						};
+					case "cancelled":
+						return {
+							outcome: "cancelled" as const,
+							path,
+							detail: `dsh-direnv: approval for ${path} was cancelled; the workspace environment stays unavailable`,
+						};
+					case "unavailable":
+						return {
+							outcome: "unavailable" as const,
+							path,
+							detail: `dsh-direnv: no approval answerer was reachable, so ${path} was not approved`,
+						};
+				}
 
-      const approved = await ctx.direnv.approve(path, workspace)
-      if (!approved.ok) {
-        return { outcome: 'refused' as const, path, detail: `dsh-direnv: the user approved, but direnv refused the write: ${approved.reason}` }
-      }
-      // Report the directory the approval actually affects — the RC's own — not
-      // the session workspace, which is a different directory whenever a command
-      // runs in a nested package. Count only names that will be set: a `.envrc`'s
-      // `unset` is not an injected variable.
-      const approvedDir = dirname(path)
-      const after = await ctx.direnv.statusFor(approvedDir)
-      const variables = envNames(after.env).length
-      return {
-        outcome: 'approved' as const,
-        path,
-        sha256: preview.sha256,
-        variables,
-        detail: [
-          `dsh-direnv: approved ${path}.`,
-          `The next command in this workspace receives ${variables} injected variable${variables === 1 ? '' : 's'}.`,
-          ...after.kind === 'injected' ? [] : [`Current state: ${await ctx.direnv.describe(approvedDir)}.`],
-        ].join(' '),
-      }
-    },
-    presentCall: (args) => ({
-      card: 'generic',
-      title: 'Request direnv approval',
-      kind: 'execute',
-      rawInput: args.path,
-      content: [{ type: 'text', text: args.reason === undefined ? args.path : `${args.path}\n${args.reason}` }],
-    }),
-  }))
+				const approved = await ctx.direnv.approve(path, workspace);
+				if (!approved.ok) {
+					return {
+						outcome: "refused" as const,
+						path,
+						detail: `dsh-direnv: the user approved, but direnv refused the write: ${approved.reason}`,
+					};
+				}
+				// Report the directory the approval actually affects — the RC's own — not
+				// the session workspace, which is a different directory whenever a command
+				// runs in a nested package. Count only names that will be set: a `.envrc`'s
+				// `unset` is not an injected variable.
+				const approvedDir = dirname(path);
+				const after = await ctx.direnv.statusFor(approvedDir);
+				const variables = envNames(after.env).length;
+				return {
+					outcome: "approved" as const,
+					path,
+					sha256: preview.sha256,
+					variables,
+					detail: [
+						`dsh-direnv: approved ${path}.`,
+						`The next command in this workspace receives ${variables} injected variable${variables === 1 ? "" : "s"}.`,
+						...(after.kind === "injected"
+							? []
+							: [`Current state: ${await ctx.direnv.describe(approvedDir)}.`]),
+					].join(" "),
+				};
+			},
+			presentCall: (args) => ({
+				card: "generic",
+				title: "Request direnv approval",
+				kind: "execute",
+				rawInput: args.path,
+				content: [
+					{
+						type: "text",
+						text:
+							args.reason === undefined
+								? args.path
+								: `${args.path}\n${args.reason}`,
+					},
+				],
+			}),
+		}),
+	);
 
-  ctx.tools.register(defineTool({
-    name: 'direnv_reload',
-    description: [
-      'Re-resolve a workspace direnv environment now and report what changed.',
-      'Use it after changing something direnv cannot observe, or to confirm what a workspace injects; the normal cache refreshes itself, and omitting directory refreshes every resolved workspace.',
-      'Reads only: it never approves a file.',
-    ].join(' '),
-    parameters: {
-      directory: {
-        type: 'string',
-        description: "Absolute path of the directory to re-resolve. Defaults to this agent's workspace root.",
-      },
-    },
-    output: {
-      schema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          reloaded: { type: 'integer', required: true },
-          detail: { type: 'string', required: true },
-        },
-      },
-      render: (_args, value) => [{ type: 'text', text: value.detail }],
-    },
-    async execute(args, exec) {
-      const workspace = exec.agent === undefined ? undefined : ctx.direnv.workspaceFor(exec.agent)
-      const requested = args.directory
-      const target = requested ?? (workspace === undefined ? undefined : ctx.direnv.probeDirectory(workspace, undefined))
-      if (requested === undefined && target === undefined) {
-        return { reloaded: 0, detail: 'dsh-direnv: this call has no workspace to reload; pass an explicit directory.' }
-      }
-      const report = await ctx.direnv.reload(target)
-      if (report.reloaded === 0) {
-        return {
-          reloaded: 0,
-          detail: requested === undefined
-            ? 'dsh-direnv: nothing was cached yet, so the next command resolves this workspace fresh.'
-            : `dsh-direnv: ${String(requested)} is not cached; the next command resolves it fresh.`,
-        }
-      }
-      const lines = report.changed.map((change) => {
-        const where = change.rcPath === undefined ? change.directory : change.rcPath
-        const delta = [
-          ...change.added === undefined || change.added.length === 0 ? [] : [`+${change.added.join(',+')}`],
-          ...change.removed === undefined || change.removed.length === 0 ? [] : [`-${change.removed.join(',-')}`],
-        ]
-        const suffix = delta.length === 0 ? '' : ` (changed: ${delta.join(' ')})`
-        return `  ${where}: ${change.kind}, ${String(change.variables)} variable(s)${suffix}`
-      })
-      return {
-        reloaded: report.reloaded,
-        detail: [`dsh-direnv: reloaded ${String(report.reloaded)} workspace(s).`, ...lines].join('\n'),
-      }
-    },
-    presentCall: (args) => ({
-      card: 'generic',
-      title: 'Reload direnv environment',
-      kind: 'execute',
-      rawInput: args.directory ?? '',
-      content: [{ type: 'text', text: args.directory ?? '(current workspace)' }],
-    }),
-  }))
+	ctx.tools.register(
+		defineTool({
+			name: "direnv_reload",
+			description: [
+				"Re-resolve a workspace direnv environment now and report what changed.",
+				"Use it after changing something direnv cannot observe, or to confirm what a workspace injects; the normal cache refreshes itself, and omitting directory refreshes every resolved workspace.",
+				"Reads only: it never approves a file.",
+			].join(" "),
+			parameters: {
+				directory: {
+					type: "string",
+					description:
+						"Absolute path of the directory to re-resolve. Defaults to this agent's workspace root.",
+				},
+			},
+			output: {
+				schema: {
+					type: "object",
+					additionalProperties: false,
+					properties: {
+						reloaded: { type: "integer", required: true },
+						detail: { type: "string", required: true },
+					},
+				},
+				render: (_args, value) => [{ type: "text", text: value.detail }],
+			},
+			async execute(args, exec) {
+				const workspace =
+					exec.agent === undefined
+						? undefined
+						: ctx.direnv.workspaceFor(exec.agent);
+				const requested = args.directory;
+				const target =
+					requested ??
+					(workspace === undefined
+						? undefined
+						: ctx.direnv.probeDirectory(workspace, undefined));
+				if (requested === undefined && target === undefined) {
+					return {
+						reloaded: 0,
+						detail:
+							"dsh-direnv: this call has no workspace to reload; pass an explicit directory.",
+					};
+				}
+				const report = await ctx.direnv.reload(target);
+				if (report.reloaded === 0) {
+					return {
+						reloaded: 0,
+						detail:
+							requested === undefined
+								? "dsh-direnv: nothing was cached yet, so the next command resolves this workspace fresh."
+								: `dsh-direnv: ${String(requested)} is not cached; the next command resolves it fresh.`,
+					};
+				}
+				const lines = report.changed.map((change) => {
+					const where =
+						change.rcPath === undefined ? change.directory : change.rcPath;
+					const delta = [
+						...(change.added === undefined || change.added.length === 0
+							? []
+							: [`+${change.added.join(",+")}`]),
+						...(change.removed === undefined || change.removed.length === 0
+							? []
+							: [`-${change.removed.join(",-")}`]),
+					];
+					const suffix =
+						delta.length === 0 ? "" : ` (changed: ${delta.join(" ")})`;
+					return `  ${where}: ${change.kind}, ${String(change.variables)} variable(s)${suffix}`;
+				});
+				return {
+					reloaded: report.reloaded,
+					detail: [
+						`dsh-direnv: reloaded ${String(report.reloaded)} workspace(s).`,
+						...lines,
+					].join("\n"),
+				};
+			},
+			presentCall: (args) => ({
+				card: "generic",
+				title: "Reload direnv environment",
+				kind: "execute",
+				rawInput: args.directory ?? "",
+				content: [
+					{ type: "text", text: args.directory ?? "(current workspace)" },
+				],
+			}),
+		}),
+	);
 }

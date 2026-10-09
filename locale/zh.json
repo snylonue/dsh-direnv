@@ -1,6 +1,6 @@
 {
-  "meta": {
-    "title": "Direnv",
-    "description": "dsh 的 direnv 支持"
-  }
+	"meta": {
+		"title": "Direnv",
+		"description": "dsh 的 direnv 支持"
+	}
 }

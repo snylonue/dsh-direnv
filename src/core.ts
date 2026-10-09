@@ -10,16 +10,22 @@
  *
  * @module dsh-direnv/core
  */
-import { spawn } from 'node:child_process'
-import { createHash } from 'node:crypto'
-import { closeSync, openSync, readSync, statSync } from 'node:fs'
+import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
+import { closeSync, openSync, readSync, statSync } from "node:fs";
 // resolvePath is used by the deny-store hash, which mirrors direnv's own.
-import { dirname, isAbsolute, join, parse, resolve as resolvePath } from 'node:path'
-import { realpathSync } from 'node:fs'
-import { DSH_ENV_PREFIX } from '@deepseek-ai/dsh-shell'
+import {
+	dirname,
+	isAbsolute,
+	join,
+	parse,
+	resolve as resolvePath,
+} from "node:path";
+import { realpathSync } from "node:fs";
+import { DSH_ENV_PREFIX } from "@deepseek-ai/dsh-shell";
 
 /** Environment variable names this plugin is willing to inject. */
-export const SAFE_ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
+export const SAFE_ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 /**
  * The harness-managed namespace, taken from the harness's own declaration so
@@ -28,13 +34,13 @@ export const SAFE_ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
  * authoritative, and an unmanaged `DSH_*` name would otherwise read as a
  * harness fact to the model. Every such name is dropped from the injected diff.
  */
-export const MANAGED_ENV_PREFIX = DSH_ENV_PREFIX
+export const MANAGED_ENV_PREFIX = DSH_ENV_PREFIX;
 
 /** The config file names native direnv looks for, nearest-first. */
-export const RC_NAMES = ['.envrc', '.env'] as const
+export const RC_NAMES = [".envrc", ".env"] as const;
 
 /** The plugin name carried on the session-start context message and its section. */
-export const SESSION_CONTEXT_PLUGIN = 'dsh-direnv'
+export const SESSION_CONTEXT_PLUGIN = "dsh-direnv";
 
 /**
  * Cap on the variable names a session-start context lists, so a Nix-scale
@@ -42,120 +48,135 @@ export const SESSION_CONTEXT_PLUGIN = 'dsh-direnv'
  * flooding the first request. The count is always exact even when the list is
  * elided.
  */
-export const SESSION_CONTEXT_MAX_NAMES = 64
+export const SESSION_CONTEXT_MAX_NAMES = 64;
 
 /** Config of the dsh-direnv plugin, validated strictly. */
 export interface DirenvConfig {
-  /** The direnv executable: a bare PATH name or an absolute path. */
-  executable: string
-  /** Whether workspace environment injection is active. */
-  enabled: boolean
-  /**
-   * Wall-clock budget for one `direnv export json` run, in milliseconds.
-   * Exceeding it kills direnv and the command runs without injection.
-   */
-  probeTimeoutMs: number
-  /**
-   * Whether a blocked `.envrc` makes the shell result carry an actionable
-   * notice. Disabling it keeps results byte-identical to the un-injected run.
-   */
-  notifyOnBlocked: boolean
-  /**
-   * Whether starting a session injects one model-facing context message that
-   * states the workspace's direnv state: which variable NAMES are injected, or
-   * why none are (blocked, denied, error). Values are never included, and a
-   * workspace with no `.envrc` stays silent. Off means the model learns about
-   * direnv only from command notices.
-   */
-  sessionContext: boolean
-  /**
-   * Whether `direnv_allow` may only approve a file inside the calling agent's
-   * own workspace root. Turn off only when the model is trusted to request
-   * arbitrary paths.
-   */
-  restrictAllowToWorkspace: boolean
-  /**
-   * Whether a command's own working directory selects the `.envrc`, matching
-   * native direnv. On, a command run in `<workspace>/packages/api` picks up
-   * that package's `.envrc` rather than the repository root's, which is what
-   * direnv itself would do. Off, every command in a session uses exactly the
-   * session workspace root, which costs one probe per session instead of one
-   * per distinct directory.
-   */
-  followWorkdir: boolean
-  /**
-   * Whether to resolve each directory once and reuse the result.
-   *
-   * On, the first command in a directory pays for one `direnv export` and every
-   * later command reads the cache. The cache is invalidated automatically when
-   * the `.envrc` changes or when direnv's allow/deny store is rewritten
-   * (including by a `direnv allow` run outside this harness), and on demand by
-   * the `direnv_reload` tool. Off, every command pays the probe — roughly 35 ms
-   * for an allowed `.envrc` — and no cache exists to reason about.
-   */
-  cache: boolean
-  /** Maximum `.envrc` bytes shown to the user in the approval prompt. */
-  previewBytes: number
+	/** The direnv executable: a bare PATH name or an absolute path. */
+	executable: string;
+	/** Whether workspace environment injection is active. */
+	enabled: boolean;
+	/**
+	 * Wall-clock budget for one `direnv export json` run, in milliseconds.
+	 * Exceeding it kills direnv and the command runs without injection.
+	 */
+	probeTimeoutMs: number;
+	/**
+	 * Whether a blocked `.envrc` makes the shell result carry an actionable
+	 * notice. Disabling it keeps results byte-identical to the un-injected run.
+	 */
+	notifyOnBlocked: boolean;
+	/**
+	 * Whether starting a session injects one model-facing context message that
+	 * states the workspace's direnv state: which variable NAMES are injected, or
+	 * why none are (blocked, denied, error). Values are never included, and a
+	 * workspace with no `.envrc` stays silent. Off means the model learns about
+	 * direnv only from command notices.
+	 */
+	sessionContext: boolean;
+	/**
+	 * Whether `direnv_allow` may only approve a file inside the calling agent's
+	 * own workspace root. Turn off only when the model is trusted to request
+	 * arbitrary paths.
+	 */
+	restrictAllowToWorkspace: boolean;
+	/**
+	 * Whether a command's own working directory selects the `.envrc`, matching
+	 * native direnv. On, a command run in `<workspace>/packages/api` picks up
+	 * that package's `.envrc` rather than the repository root's, which is what
+	 * direnv itself would do. Off, every command in a session uses exactly the
+	 * session workspace root, which costs one probe per session instead of one
+	 * per distinct directory.
+	 */
+	followWorkdir: boolean;
+	/**
+	 * Whether to resolve each directory once and reuse the result.
+	 *
+	 * On, the first command in a directory pays for one `direnv export` and every
+	 * later command reads the cache. The cache is invalidated automatically when
+	 * the `.envrc` changes or when direnv's allow/deny store is rewritten
+	 * (including by a `direnv allow` run outside this harness), and on demand by
+	 * the `direnv_reload` tool. Off, every command pays the probe — roughly 35 ms
+	 * for an allowed `.envrc` — and no cache exists to reason about.
+	 */
+	cache: boolean;
+	/** Maximum `.envrc` bytes shown to the user in the approval prompt. */
+	previewBytes: number;
 }
 
 /** The plan's defaults. */
 export const defaultConfig: DirenvConfig = {
-  executable: 'direnv',
-  enabled: true,
-  probeTimeoutMs: 10_000,
-  notifyOnBlocked: true,
-  sessionContext: true,
-  restrictAllowToWorkspace: true,
-  followWorkdir: true,
-  cache: true,
-  previewBytes: 2_048,
-}
+	executable: "direnv",
+	enabled: true,
+	probeTimeoutMs: 10_000,
+	notifyOnBlocked: true,
+	sessionContext: true,
+	restrictAllowToWorkspace: true,
+	followWorkdir: true,
+	cache: true,
+	previewBytes: 2_048,
+};
 
 /** Why a workspace produced no injectable environment. */
-export type DirenvStatusKind = 'injected' | 'no-rc' | 'blocked' | 'denied' | 'error' | 'disabled'
+export type DirenvStatusKind =
+	| "injected"
+	| "no-rc"
+	| "blocked"
+	| "denied"
+	| "error"
+	| "disabled";
 
 /** One workspace's resolved direnv state. */
 export interface DirenvStatus {
-  kind: DirenvStatusKind
-  /** The `.envrc`/`.env` that governs the workspace, when one was found. */
-  rcPath?: string
-  /**
-   * Variables to inject, already filtered; never contains a `DSH_*` name.
-   * A `undefined` value means "remove this name from the child environment",
-   * which is what a `.envrc`'s `unset` compiles to.
-   */
-  env: InjectableEnv
-  /** Names dropped from the diff because they are unsafe to inject. */
-  dropped: string[]
-  /** A bounded, log-safe explanation; never contains an environment value. */
-  detail?: string
+	kind: DirenvStatusKind;
+	/** The `.envrc`/`.env` that governs the workspace, when one was found. */
+	rcPath?: string;
+	/**
+	 * Variables to inject, already filtered; never contains a `DSH_*` name.
+	 * A `undefined` value means "remove this name from the child environment",
+	 * which is what a `.envrc`'s `unset` compiles to.
+	 */
+	env: InjectableEnv;
+	/** Names dropped from the diff because they are unsafe to inject. */
+	dropped: string[];
+	/** A bounded, log-safe explanation; never contains an environment value. */
+	detail?: string;
 }
 
 function assertNonEmpty(value: string, what: string): void {
-  if (typeof value !== 'string' || value.length === 0) throw new TypeError(`dsh-direnv: ${what} must be a non-empty string`)
+	if (typeof value !== "string" || value.length === 0)
+		throw new TypeError(`dsh-direnv: ${what} must be a non-empty string`);
 }
 
 function assertNoNul(value: string, what: string): void {
-  if (value.includes('\0')) throw new TypeError(`dsh-direnv: ${what} must not contain a NUL byte`)
+	if (value.includes("\0"))
+		throw new TypeError(`dsh-direnv: ${what} must not contain a NUL byte`);
 }
 
 /** Validate the semantic config invariants the schema cannot express. */
 export function assertDirenvConfig(config: DirenvConfig): void {
-  assertNonEmpty(config.executable, 'config.executable')
-  assertNoNul(config.executable, 'config.executable')
-  if (!Number.isInteger(config.probeTimeoutMs) || config.probeTimeoutMs <= 0) {
-    throw new TypeError('dsh-direnv: config.probeTimeoutMs must be a positive integer')
-  }
-  if (!Number.isInteger(config.previewBytes) || config.previewBytes < 0) {
-    throw new TypeError('dsh-direnv: config.previewBytes must be a non-negative integer')
-  }
+	assertNonEmpty(config.executable, "config.executable");
+	assertNoNul(config.executable, "config.executable");
+	if (!Number.isInteger(config.probeTimeoutMs) || config.probeTimeoutMs <= 0) {
+		throw new TypeError(
+			"dsh-direnv: config.probeTimeoutMs must be a positive integer",
+		);
+	}
+	if (!Number.isInteger(config.previewBytes) || config.previewBytes < 0) {
+		throw new TypeError(
+			"dsh-direnv: config.previewBytes must be a non-negative integer",
+		);
+	}
 }
 
 /** An absolute directory this plugin may probe. */
 export function assertWorkspace(workspace: string): void {
-  assertNonEmpty(workspace, 'workspace')
-  assertNoNul(workspace, 'workspace')
-  if (!isAbsolute(workspace)) throw new TypeError(`dsh-direnv: workspace must be an absolute path: ${workspace}`)
+	assertNonEmpty(workspace, "workspace");
+	assertNoNul(workspace, "workspace");
+	if (!isAbsolute(workspace))
+		throw new TypeError(
+			`dsh-direnv: workspace must be an absolute path: ${workspace}`,
+		);
 }
 
 /**
@@ -164,23 +185,23 @@ export function assertWorkspace(workspace: string): void {
  * `undefined` when no file governs the directory.
  */
 export function findRcPath(workspace: string): string | undefined {
-  assertWorkspace(workspace)
-  let dir = workspace
-  const root = parse(dir).root
-  for (;;) {
-    for (const name of RC_NAMES) {
-      const candidate = join(dir, name)
-      try {
-        if (statSync(candidate).isFile()) return candidate
-      } catch {
-        // Absent or unreadable: keep walking, exactly as direnv does.
-      }
-    }
-    if (dir === root) return undefined
-    const parent = dirname(dir)
-    if (parent === dir) return undefined
-    dir = parent
-  }
+	assertWorkspace(workspace);
+	let dir = workspace;
+	const root = parse(dir).root;
+	for (;;) {
+		for (const name of RC_NAMES) {
+			const candidate = join(dir, name);
+			try {
+				if (statSync(candidate).isFile()) return candidate;
+			} catch {
+				// Absent or unreadable: keep walking, exactly as direnv does.
+			}
+		}
+		if (dir === root) return undefined;
+		const parent = dirname(dir);
+		if (parent === dir) return undefined;
+		dir = parent;
+	}
 }
 
 /**
@@ -197,54 +218,58 @@ export function findRcPath(workspace: string): string | undefined {
  * needed to compute this. A missing entry contributes only its resolved path,
  * so the transition from "absent" to "present" changes the stamp.
  */
-export function cacheStamp(rcPath: string | undefined, env: NodeJS.ProcessEnv | undefined = process.env): string {
-  const parts: string[] = [rcPath ?? '-']
-  if (rcPath !== undefined) {
-    try {
-      const stat = statSync(rcPath)
-      parts.push(`${String(stat.size)}:${String(stat.mtimeMs)}`)
-    } catch {
-      parts.push('missing')
-    }
-  }
-  const dataHome = env.XDG_DATA_HOME !== undefined && env.XDG_DATA_HOME.length > 0
-    ? env.XDG_DATA_HOME
-    : env.HOME !== undefined && env.HOME.length > 0
-      ? join(env.HOME, '.local', 'share')
-      : undefined
-  if (dataHome !== undefined) {
-    for (const store of ['allow', 'deny']) {
-      const dir = join(dataHome, 'direnv', store)
-      try {
-        parts.push(`${dir}:${String(statSync(dir).mtimeMs)}`)
-      } catch {
-        parts.push(`${dir}:absent`)
-      }
-    }
-  }
-  return parts.join('|')
+export function cacheStamp(
+	rcPath: string | undefined,
+	env: NodeJS.ProcessEnv | undefined = process.env,
+): string {
+	const parts: string[] = [rcPath ?? "-"];
+	if (rcPath !== undefined) {
+		try {
+			const stat = statSync(rcPath);
+			parts.push(`${String(stat.size)}:${String(stat.mtimeMs)}`);
+		} catch {
+			parts.push("missing");
+		}
+	}
+	const dataHome =
+		env.XDG_DATA_HOME !== undefined && env.XDG_DATA_HOME.length > 0
+			? env.XDG_DATA_HOME
+			: env.HOME !== undefined && env.HOME.length > 0
+				? join(env.HOME, ".local", "share")
+				: undefined;
+	if (dataHome !== undefined) {
+		for (const store of ["allow", "deny"]) {
+			const dir = join(dataHome, "direnv", store);
+			try {
+				parts.push(`${dir}:${String(statSync(dir).mtimeMs)}`);
+			} catch {
+				parts.push(`${dir}:absent`);
+			}
+		}
+	}
+	return parts.join("|");
 }
 
 /** Whether `path` names an existing directory. */
 export function isExistingDirectory(path: string): boolean {
-  try {
-    return statSync(path).isDirectory()
-  } catch {
-    return false
-  }
+	try {
+		return statSync(path).isDirectory();
+	} catch {
+		return false;
+	}
 }
 
 /** One bounded, hash-stable view of the file a user is asked to approve. */
 export interface RcPreview {
-  path: string
-  /** Lowercase hex SHA-256 of the full file bytes. */
-  sha256: string
-  /** Total file size in bytes. */
-  bytes: number
-  /** The leading bytes, decoded as UTF-8, bounded by the configured budget. */
-  text: string
-  /** True when `text` is shorter than the file. */
-  truncated: boolean
+	path: string;
+	/** Lowercase hex SHA-256 of the full file bytes. */
+	sha256: string;
+	/** Total file size in bytes. */
+	bytes: number;
+	/** The leading bytes, decoded as UTF-8, bounded by the configured budget. */
+	text: string;
+	/** True when `text` is shorter than the file. */
+	truncated: boolean;
 }
 
 /**
@@ -253,57 +278,61 @@ export interface RcPreview {
  * beyond the hash pass.
  */
 export function previewRc(rcPath: string, maxBytes: number): RcPreview {
-  assertNonEmpty(rcPath, 'rcPath')
-  const stat = statSync(rcPath)
-  if (!stat.isFile()) throw new TypeError(`dsh-direnv: not a regular file: ${rcPath}`)
-  const fd = openSync(rcPath, 'r')
-  try {
-    const hash = createHash('sha256')
-    const head = Buffer.alloc(Math.max(0, maxBytes))
-    let headBytes = 0
-    const chunk = Buffer.alloc(64 * 1024)
-    for (;;) {
-      const read = readSync(fd, chunk, 0, chunk.length, null)
-      if (read <= 0) break
-      hash.update(chunk.subarray(0, read))
-      if (headBytes < head.length) {
-        const take = Math.min(head.length - headBytes, read)
-        chunk.copy(head, headBytes, 0, take)
-        headBytes += take
-      }
-    }
-    return {
-      path: rcPath,
-      sha256: hash.digest('hex'),
-      bytes: stat.size,
-      text: head.subarray(0, headBytes).toString('utf8'),
-      truncated: stat.size > headBytes,
-    }
-  } finally {
-    closeSync(fd)
-  }
+	assertNonEmpty(rcPath, "rcPath");
+	const stat = statSync(rcPath);
+	if (!stat.isFile())
+		throw new TypeError(`dsh-direnv: not a regular file: ${rcPath}`);
+	const fd = openSync(rcPath, "r");
+	try {
+		const hash = createHash("sha256");
+		const head = Buffer.alloc(Math.max(0, maxBytes));
+		let headBytes = 0;
+		const chunk = Buffer.alloc(64 * 1024);
+		for (;;) {
+			const read = readSync(fd, chunk, 0, chunk.length, null);
+			if (read <= 0) break;
+			hash.update(chunk.subarray(0, read));
+			if (headBytes < head.length) {
+				const take = Math.min(head.length - headBytes, read);
+				chunk.copy(head, headBytes, 0, take);
+				headBytes += take;
+			}
+		}
+		return {
+			path: rcPath,
+			sha256: hash.digest("hex"),
+			bytes: stat.size,
+			text: head.subarray(0, headBytes).toString("utf8"),
+			truncated: stat.size > headBytes,
+		};
+	} finally {
+		closeSync(fd);
+	}
 }
 
 /** The outcome of one `direnv export json` child. */
 export interface ExportRun {
-  code: number | null
-  signal: NodeJS.Signals | null
-  stdout: string
-  stderr: string
-  /** True when the probe budget elapsed and the child was killed. */
-  timedOut: boolean
-  /** True when the executable could not be started at all. */
-  spawnFailed: boolean
+	code: number | null;
+	signal: NodeJS.Signals | null;
+	stdout: string;
+	stderr: string;
+	/** True when the probe budget elapsed and the child was killed. */
+	timedOut: boolean;
+	/** True when the executable could not be started at all. */
+	spawnFailed: boolean;
 }
 
 /** The config one probe runs under, including the environment it inherits. */
 export interface ExportConfig extends DirenvConfig {
-  /** Environment for the direnv child; defaults to the harness process's own. */
-  env?: NodeJS.ProcessEnv
+	/** Environment for the direnv child; defaults to the harness process's own. */
+	env?: NodeJS.ProcessEnv;
 }
 
 /** Injectable probe seam so activation and status are testable without a host. */
-export type ExportRunner = (workspace: string, config: ExportConfig) => ExportRun | Promise<ExportRun>
+export type ExportRunner = (
+	workspace: string,
+	config: ExportConfig,
+) => ExportRun | Promise<ExportRun>;
 
 /**
  * Run one fixed-argv child without blocking the event loop. `shell` is never
@@ -322,80 +351,113 @@ export type ExportRunner = (workspace: string, config: ExportConfig) => ExportRu
  * @returns the child outcome; never rejects.
  */
 export function runChild(
-  executable: string,
-  args: readonly string[],
-  options: { cwd: string; env: NodeJS.ProcessEnv; timeoutMs: number; maxBytes: number },
+	executable: string,
+	args: readonly string[],
+	options: {
+		cwd: string;
+		env: NodeJS.ProcessEnv;
+		timeoutMs: number;
+		maxBytes: number;
+	},
 ): Promise<ExportRun> {
-  return new Promise((resolve) => {
-    let settled = false
-    let timedOut = false
-    let bytes = 0
-    let stdout = ''
-    let stderr = ''
-    let child: ReturnType<typeof spawn>
-    const finish = (outcome: ExportRun): void => {
-      if (settled) return
-      settled = true
-      if (timer !== undefined) clearTimeout(timer)
-      resolve(outcome)
-    }
-    try {
-      child = spawn(executable, [...args], {
-        cwd: options.cwd,
-        env: options.env,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        windowsHide: true,
-      })
-    } catch {
-      resolve({ code: null, signal: null, stdout: '', stderr: '', timedOut: false, spawnFailed: true })
-      return
-    }
-    const timer = setTimeout(() => {
-      timedOut = true
-      child.kill('SIGKILL')
-    }, options.timeoutMs)
-    const collect = (stream: typeof child.stdout, append: (text: string) => void): void => {
-      if (stream === null) return
-      stream.setEncoding('utf8')
-      stream.on('data', (chunk: string) => {
-        bytes += Buffer.byteLength(chunk)
-        if (bytes > options.maxBytes) {
-          child.kill('SIGKILL')
-          return
-        }
-        append(chunk)
-      })
-    }
-    collect(child.stdout, (text) => { stdout += text })
-    collect(child.stderr, (text) => { stderr += text })
-    child.on('error', () => finish({ code: null, signal: null, stdout, stderr, timedOut: false, spawnFailed: true }))
-    child.on('close', (code, signal) => finish({
-      code,
-      signal,
-      stdout,
-      stderr,
-      timedOut,
-      spawnFailed: bytes > options.maxBytes,
-    }))
-  })
+	return new Promise((resolve) => {
+		let settled = false;
+		let timedOut = false;
+		let bytes = 0;
+		let stdout = "";
+		let stderr = "";
+		let child: ReturnType<typeof spawn>;
+		const finish = (outcome: ExportRun): void => {
+			if (settled) return;
+			settled = true;
+			if (timer !== undefined) clearTimeout(timer);
+			resolve(outcome);
+		};
+		try {
+			child = spawn(executable, [...args], {
+				cwd: options.cwd,
+				env: options.env,
+				stdio: ["ignore", "pipe", "pipe"],
+				windowsHide: true,
+			});
+		} catch {
+			resolve({
+				code: null,
+				signal: null,
+				stdout: "",
+				stderr: "",
+				timedOut: false,
+				spawnFailed: true,
+			});
+			return;
+		}
+		const timer = setTimeout(() => {
+			timedOut = true;
+			child.kill("SIGKILL");
+		}, options.timeoutMs);
+		const collect = (
+			stream: typeof child.stdout,
+			append: (text: string) => void,
+		): void => {
+			if (stream === null) return;
+			stream.setEncoding("utf8");
+			stream.on("data", (chunk: string) => {
+				bytes += Buffer.byteLength(chunk);
+				if (bytes > options.maxBytes) {
+					child.kill("SIGKILL");
+					return;
+				}
+				append(chunk);
+			});
+		};
+		collect(child.stdout, (text) => {
+			stdout += text;
+		});
+		collect(child.stderr, (text) => {
+			stderr += text;
+		});
+		child.on("error", () =>
+			finish({
+				code: null,
+				signal: null,
+				stdout,
+				stderr,
+				timedOut: false,
+				spawnFailed: true,
+			}),
+		);
+		child.on("close", (code, signal) =>
+			finish({
+				code,
+				signal,
+				stdout,
+				stderr,
+				timedOut,
+				spawnFailed: bytes > options.maxBytes,
+			}),
+		);
+	});
 }
 
 /**
  * Run `direnv export json` in `workspace`. `export json` prints the DIFF direnv
  * would apply, which is exactly the injection this plugin performs.
  */
-export const runExport: ExportRunner = async (workspace, config: ExportConfig) => {
-  assertWorkspace(workspace)
-  return runChild(config.executable, ['export', 'json'], {
-    cwd: workspace,
-    env: config.env ?? process.env,
-    timeoutMs: config.probeTimeoutMs,
-    maxBytes: 8 * 1024 * 1024,
-  })
-}
+export const runExport: ExportRunner = async (
+	workspace,
+	config: ExportConfig,
+) => {
+	assertWorkspace(workspace);
+	return runChild(config.executable, ["export", "json"], {
+		cwd: workspace,
+		env: config.env ?? process.env,
+		timeoutMs: config.probeTimeoutMs,
+		maxBytes: 8 * 1024 * 1024,
+	});
+};
 
 /** One parsed diff entry: a value to set, or `null` meaning "unset me". */
-export type DiffEntry = string | null
+export type DiffEntry = string | null;
 
 /**
  * An environment map for one execution.
@@ -406,30 +468,35 @@ export type DiffEntry = string | null
  * real `unset` — which a `.envrc` can ask for — so the value type is widened
  * here and narrowed again at the seam boundary.
  */
-export type InjectableEnv = Record<string, string | undefined>
+export type InjectableEnv = Record<string, string | undefined>;
 
 /**
  * Parse one `direnv export json` stdout into a diff. Returns `undefined` for
  * output that is not a JSON object of strings-or-null, so a malformed response
  * degrades to "no injection" instead of injecting garbage.
  */
-export function parseExport(stdout: string): Record<string, DiffEntry> | undefined {
-  const trimmed = stdout.trim()
-  if (trimmed.length === 0) return {}
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(trimmed)
-  } catch {
-    return undefined
-  }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return undefined
-  const diff: Record<string, DiffEntry> = {}
-  for (const [name, value] of Object.entries(parsed as Record<string, unknown>)) {
-    if (value === null) diff[name] = null
-    else if (typeof value === 'string') diff[name] = value
-    else return undefined
-  }
-  return diff
+export function parseExport(
+	stdout: string,
+): Record<string, DiffEntry> | undefined {
+	const trimmed = stdout.trim();
+	if (trimmed.length === 0) return {};
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(trimmed);
+	} catch {
+		return undefined;
+	}
+	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+		return undefined;
+	const diff: Record<string, DiffEntry> = {};
+	for (const [name, value] of Object.entries(
+		parsed as Record<string, unknown>,
+	)) {
+		if (value === null) diff[name] = null;
+		else if (typeof value === "string") diff[name] = value;
+		else return undefined;
+	}
+	return diff;
 }
 
 /**
@@ -442,38 +509,42 @@ export function parseExport(stdout: string): Record<string, DiffEntry> | undefin
  * would mislead tools that read it).
  */
 export function selectInjectable(diff: Record<string, DiffEntry>): {
-  env: InjectableEnv
-  dropped: string[]
+	env: InjectableEnv;
+	dropped: string[];
 } {
-  const env: InjectableEnv = {}
-  const dropped: string[] = []
-  for (const [name, value] of Object.entries(diff)) {
-    if (!SAFE_ENV_NAME.test(name) || name.startsWith(MANAGED_ENV_PREFIX) || name.startsWith('DIRENV_')) {
-      dropped.push(name)
-      continue
-    }
-    // `null` is direnv saying "this name must not be set". Omitting the name
-    // would be wrong: the executor merges this map onto the credential-scrubbed
-    // parent environment, so an absent name keeps whatever the parent had and
-    // `unset FOO` in a .envrc would silently do nothing. `undefined` is the
-    // subprocess seam's removal convention — it filters those entries out of
-    // the target environment, so the child genuinely does not have the name.
-    if (value === null) {
-      env[name] = undefined
-      continue
-    }
-    if (value.includes('\0')) {
-      dropped.push(name)
-      continue
-    }
-    env[name] = value
-  }
-  return { env, dropped }
+	const env: InjectableEnv = {};
+	const dropped: string[] = [];
+	for (const [name, value] of Object.entries(diff)) {
+		if (
+			!SAFE_ENV_NAME.test(name) ||
+			name.startsWith(MANAGED_ENV_PREFIX) ||
+			name.startsWith("DIRENV_")
+		) {
+			dropped.push(name);
+			continue;
+		}
+		// `null` is direnv saying "this name must not be set". Omitting the name
+		// would be wrong: the executor merges this map onto the credential-scrubbed
+		// parent environment, so an absent name keeps whatever the parent had and
+		// `unset FOO` in a .envrc would silently do nothing. `undefined` is the
+		// subprocess seam's removal convention — it filters those entries out of
+		// the target environment, so the child genuinely does not have the name.
+		if (value === null) {
+			env[name] = undefined;
+			continue;
+		}
+		if (value.includes("\0")) {
+			dropped.push(name);
+			continue;
+		}
+		env[name] = value;
+	}
+	return { env, dropped };
 }
 
 /** Recognize direnv's own refusal text without pinning ANSI or wording. */
 export function looksBlocked(stderr: string): boolean {
-  return /is blocked|blocked\. Run/i.test(stderr)
+	return /is blocked|blocked\. Run/i.test(stderr);
 }
 
 /**
@@ -482,13 +553,16 @@ export function looksBlocked(stderr: string): boolean {
  * Returns `undefined` when neither variable is set, in which case the caller
  * must not claim to know direnv's authorization state.
  */
-export function direnvStoreDir(env: NodeJS.ProcessEnv | undefined = process.env): string | undefined {
-  const dataHome = env?.XDG_DATA_HOME !== undefined && env.XDG_DATA_HOME.length > 0
-    ? env.XDG_DATA_HOME
-    : env?.HOME !== undefined && env.HOME.length > 0
-      ? join(env.HOME, '.local', 'share')
-      : undefined
-  return dataHome === undefined ? undefined : join(dataHome, 'direnv')
+export function direnvStoreDir(
+	env: NodeJS.ProcessEnv | undefined = process.env,
+): string | undefined {
+	const dataHome =
+		env?.XDG_DATA_HOME !== undefined && env.XDG_DATA_HOME.length > 0
+			? env.XDG_DATA_HOME
+			: env?.HOME !== undefined && env.HOME.length > 0
+				? join(env.HOME, ".local", "share")
+				: undefined;
+	return dataHome === undefined ? undefined : join(dataHome, "direnv");
 }
 
 /**
@@ -499,15 +573,20 @@ export function direnvStoreDir(env: NodeJS.ProcessEnv | undefined = process.env)
  * store is the only authoritative signal. The file name is direnv's own
  * `pathHash`: sha256 of the absolute path plus a newline.
  */
-export function isDenied(rcPath: string, env: NodeJS.ProcessEnv | undefined = process.env): boolean {
-  const store = direnvStoreDir(env)
-  if (store === undefined) return false
-  const hash = createHash('sha256').update(`${resolvePath(rcPath)}\n`).digest('hex')
-  try {
-    return statSync(join(store, 'deny', hash)).isFile()
-  } catch {
-    return false
-  }
+export function isDenied(
+	rcPath: string,
+	env: NodeJS.ProcessEnv | undefined = process.env,
+): boolean {
+	const store = direnvStoreDir(env);
+	if (store === undefined) return false;
+	const hash = createHash("sha256")
+		.update(`${resolvePath(rcPath)}\n`)
+		.digest("hex");
+	try {
+		return statSync(join(store, "deny", hash)).isFile();
+	} catch {
+		return false;
+	}
 }
 
 /**
@@ -518,23 +597,23 @@ export function isDenied(rcPath: string, env: NodeJS.ProcessEnv | undefined = pr
  * remaining names rather than of the raw object.
  */
 export function hasAppliedEntries(diff: Record<string, DiffEntry>): boolean {
-  return Object.keys(diff).some((name) => !name.startsWith('DIRENV_'))
+	return Object.keys(diff).some((name) => !name.startsWith("DIRENV_"));
 }
 
 /** Injectable seam: the export runner, the RC locator, and the child environment. */
 export interface DirenvRuntime {
-  runExport?: ExportRunner
-  findRcPath?: (workspace: string) => string | undefined
-  /**
-   * The environment every direnv child runs under, and the one that decides
-   * which allow/deny store a cache stamp describes.
-   *
-   * Both must come from here rather than from `process.env` independently:
-   * `direnv export` resolves its store from `XDG_DATA_HOME`/`HOME`, so a stamp
-   * computed against a different environment would describe a store the probe
-   * never consulted, and an external `direnv allow` would go unnoticed.
-   */
-  env?: NodeJS.ProcessEnv
+	runExport?: ExportRunner;
+	findRcPath?: (workspace: string) => string | undefined;
+	/**
+	 * The environment every direnv child runs under, and the one that decides
+	 * which allow/deny store a cache stamp describes.
+	 *
+	 * Both must come from here rather than from `process.env` independently:
+	 * `direnv export` resolves its store from `XDG_DATA_HOME`/`HOME`, so a stamp
+	 * computed against a different environment would describe a store the probe
+	 * never consulted, and an external `direnv allow` would go unnoticed.
+	 */
+	env?: NodeJS.ProcessEnv;
 }
 
 /**
@@ -545,86 +624,97 @@ export interface DirenvRuntime {
  * reports `blocked` without ever evaluating the file.
  */
 export async function resolveStatus(
-  workspace: string,
-  config: ExportConfig,
-  runtime: DirenvRuntime = {},
+	workspace: string,
+	config: ExportConfig,
+	runtime: DirenvRuntime = {},
 ): Promise<DirenvStatus> {
-  if (!config.enabled) return { kind: 'disabled', env: {}, dropped: [] }
-  const find = runtime.findRcPath ?? findRcPath
-  const rcPath = find(workspace)
-  const run = await (runtime.runExport ?? runExport)(workspace, config)
+	if (!config.enabled) return { kind: "disabled", env: {}, dropped: [] };
+	const find = runtime.findRcPath ?? findRcPath;
+	const rcPath = find(workspace);
+	const run = await (runtime.runExport ?? runExport)(workspace, config);
 
-  if (run.spawnFailed) {
-    return { kind: 'error', env: {}, dropped: [], detail: 'direnv could not be started' }
-  }
-  if (run.timedOut) {
-    return {
-      kind: 'error',
-      env: {},
-      dropped: [],
-      ...rcPath === undefined ? {} : { rcPath },
-      detail: `direnv export timed out after ${config.probeTimeoutMs} ms`,
-    }
-  }
-  if (run.code !== 0) {
-    const blocked = looksBlocked(run.stderr)
-    return {
-      kind: blocked ? 'blocked' : 'error',
-      env: {},
-      dropped: [],
-      ...rcPath === undefined ? {} : { rcPath },
-      detail: blocked
-        ? 'the workspace .envrc is not approved; native direnv refused to load it'
-        : `direnv export exited with code ${String(run.code)}`,
-    }
-  }
+	if (run.spawnFailed) {
+		return {
+			kind: "error",
+			env: {},
+			dropped: [],
+			detail: "direnv could not be started",
+		};
+	}
+	if (run.timedOut) {
+		return {
+			kind: "error",
+			env: {},
+			dropped: [],
+			...(rcPath === undefined ? {} : { rcPath }),
+			detail: `direnv export timed out after ${config.probeTimeoutMs} ms`,
+		};
+	}
+	if (run.code !== 0) {
+		const blocked = looksBlocked(run.stderr);
+		return {
+			kind: blocked ? "blocked" : "error",
+			env: {},
+			dropped: [],
+			...(rcPath === undefined ? {} : { rcPath }),
+			detail: blocked
+				? "the workspace .envrc is not approved; native direnv refused to load it"
+				: `direnv export exited with code ${String(run.code)}`,
+		};
+	}
 
-  const diff = parseExport(run.stdout)
-  if (diff === undefined) {
-    return {
-      kind: 'error',
-      env: {},
-      dropped: [],
-      ...rcPath === undefined ? {} : { rcPath },
-      detail: 'direnv export produced output this plugin could not parse',
-    }
-  }
-  const { env, dropped } = selectInjectable(diff)
-  if (rcPath === undefined) {
-    // No RC anywhere: nothing governs this directory and there is nothing to allow.
-    return { kind: 'no-rc', env, dropped }
-  }
-  if (Object.keys(env).length === 0 && !hasAppliedEntries(diff)) {
-    // An RC exists, direnv exited zero, yet it applied nothing. That is either
-    // a denied file (direnv >= 2.33 revokes silently) or a legitimately empty
-    // one; only the deny store distinguishes them, so an empty .envrc is
-    // reported as "nothing to inject" rather than as an error the user must act
-    // on. `unset`-only diffs are non-empty here and therefore still inject.
-    if (!isDenied(rcPath, config.env)) {
-      return { kind: 'no-rc', rcPath, env, dropped }
-    }
-    return {
-      kind: 'denied',
-      rcPath,
-      env,
-      dropped,
-      detail: 'this .envrc is denied; re-approve it to load its environment',
-    }
-  }
-  return { kind: 'injected', rcPath, env, dropped }
+	const diff = parseExport(run.stdout);
+	if (diff === undefined) {
+		return {
+			kind: "error",
+			env: {},
+			dropped: [],
+			...(rcPath === undefined ? {} : { rcPath }),
+			detail: "direnv export produced output this plugin could not parse",
+		};
+	}
+	const { env, dropped } = selectInjectable(diff);
+	if (rcPath === undefined) {
+		// No RC anywhere: nothing governs this directory and there is nothing to allow.
+		return { kind: "no-rc", env, dropped };
+	}
+	if (Object.keys(env).length === 0 && !hasAppliedEntries(diff)) {
+		// An RC exists, direnv exited zero, yet it applied nothing. That is either
+		// a denied file (direnv >= 2.33 revokes silently) or a legitimately empty
+		// one; only the deny store distinguishes them, so an empty .envrc is
+		// reported as "nothing to inject" rather than as an error the user must act
+		// on. `unset`-only diffs are non-empty here and therefore still inject.
+		if (!isDenied(rcPath, config.env)) {
+			return { kind: "no-rc", rcPath, env, dropped };
+		}
+		return {
+			kind: "denied",
+			rcPath,
+			env,
+			dropped,
+			detail: "this .envrc is denied; re-approve it to load its environment",
+		};
+	}
+	return { kind: "injected", rcPath, env, dropped };
 }
 
 /** A short, log-safe one-line summary of a status; never carries env values. */
 export function describeStatus(status: DirenvStatus): string {
-  const where = status.rcPath === undefined ? '' : ` (${status.rcPath})`
-  switch (status.kind) {
-    case 'injected': return `direnv injected ${Object.keys(status.env).length} variable(s)${where}`
-    case 'no-rc': return 'no .envrc governs this workspace'
-    case 'blocked': return `the workspace .envrc is blocked${where}`
-    case 'denied': return `the workspace .envrc is denied${where}`
-    case 'error': return status.detail ?? 'direnv could not be consulted'
-    case 'disabled': return 'direnv injection is disabled'
-  }
+	const where = status.rcPath === undefined ? "" : ` (${status.rcPath})`;
+	switch (status.kind) {
+		case "injected":
+			return `direnv injected ${Object.keys(status.env).length} variable(s)${where}`;
+		case "no-rc":
+			return "no .envrc governs this workspace";
+		case "blocked":
+			return `the workspace .envrc is blocked${where}`;
+		case "denied":
+			return `the workspace .envrc is denied${where}`;
+		case "error":
+			return status.detail ?? "direnv could not be consulted";
+		case "disabled":
+			return "direnv injection is disabled";
+	}
 }
 
 /**
@@ -632,39 +722,42 @@ export function describeStatus(status: DirenvStatus): string {
  * injected. It names the exact file and the exact tool call, so the model's
  * next action is unambiguous.
  */
-export function blockedNotice(status: DirenvStatus, workspace: string): string | undefined {
-  const rc = status.rcPath
-  if (status.kind === 'blocked') {
-    const target = rc === undefined ? 'the workspace .envrc' : rc
-    return [
-      '',
-      '[dsh-direnv] This command ran WITHOUT the workspace direnv environment.',
-      `[dsh-direnv] ${target} is not approved, so native direnv refused to load it.`,
-      '[dsh-direnv] Call the direnv_allow tool with this path to ask the user to approve it:',
-      `[dsh-direnv]   direnv_allow path=${target}`,
-      `[dsh-direnv] Workspace: ${workspace}`,
-      '',
-    ].join('\n')
-  }
-  if (status.kind === 'denied') {
-    const target = rc === undefined ? 'the workspace .envrc' : rc
-    return [
-      '',
-      '[dsh-direnv] This command ran WITHOUT the workspace direnv environment.',
-      `[dsh-direnv] ${target} exists but direnv applied nothing: it is denied, or the file exports nothing.`,
-      '[dsh-direnv] Ask the user to check it with: direnv status',
-      '',
-    ].join('\n')
-  }
-  if (status.kind === 'error') {
-    return [
-      '',
-      '[dsh-direnv] This command ran WITHOUT the workspace direnv environment.',
-      `[dsh-direnv] ${status.detail ?? 'direnv could not be consulted.'}`,
-      '',
-    ].join('\n')
-  }
-  return undefined
+export function blockedNotice(
+	status: DirenvStatus,
+	workspace: string,
+): string | undefined {
+	const rc = status.rcPath;
+	if (status.kind === "blocked") {
+		const target = rc === undefined ? "the workspace .envrc" : rc;
+		return [
+			"",
+			"[dsh-direnv] This command ran WITHOUT the workspace direnv environment.",
+			`[dsh-direnv] ${target} is not approved, so native direnv refused to load it.`,
+			"[dsh-direnv] Call the direnv_allow tool with this path to ask the user to approve it:",
+			`[dsh-direnv]   direnv_allow path=${target}`,
+			`[dsh-direnv] Workspace: ${workspace}`,
+			"",
+		].join("\n");
+	}
+	if (status.kind === "denied") {
+		const target = rc === undefined ? "the workspace .envrc" : rc;
+		return [
+			"",
+			"[dsh-direnv] This command ran WITHOUT the workspace direnv environment.",
+			`[dsh-direnv] ${target} exists but direnv applied nothing: it is denied, or the file exports nothing.`,
+			"[dsh-direnv] Ask the user to check it with: direnv status",
+			"",
+		].join("\n");
+	}
+	if (status.kind === "error") {
+		return [
+			"",
+			"[dsh-direnv] This command ran WITHOUT the workspace direnv environment.",
+			`[dsh-direnv] ${status.detail ?? "direnv could not be consulted."}`,
+			"",
+		].join("\n");
+	}
+	return undefined;
 }
 
 /**
@@ -677,55 +770,59 @@ export function blockedNotice(status: DirenvStatus, workspace: string): string |
  * self-identifying because it arrives as a plugin-sourced user message with no
  * surrounding command output to attribute it.
  */
-export function sessionContextText(status: DirenvStatus, workspace: string): string | undefined {
-  const prefix = `[${SESSION_CONTEXT_PLUGIN}]`
-  switch (status.kind) {
-    case 'disabled':
-    case 'no-rc':
-      return undefined
-    case 'injected': {
-      // Count only names that will be SET; a `.envrc`'s `unset` is not an
-      // injected variable and must not inflate the list or its count.
-      const names = Object.entries(status.env)
-        .filter(([, value]) => value !== undefined)
-        .map(([name]) => name)
-        .sort()
-      const shown = names.slice(0, SESSION_CONTEXT_MAX_NAMES)
-      const hidden = names.length - shown.length
-      const list = shown.length === 0
-        ? '(no variables; this .envrc only unsets names)'
-        : `${shown.join(', ')}${hidden > 0 ? `, and ${String(hidden)} more` : ''}`
-      return [
-        `${prefix} The workspace direnv environment is active.`,
-        `${prefix} ${status.rcPath ?? 'The governing .envrc'} injects ${String(names.length)} variable(s) into every command the agent runs:`,
-        `${prefix}   ${list}`,
-        `${prefix} Values are applied to each command's environment and are deliberately not shown here.`,
-      ].join('\n')
-    }
-    case 'blocked': {
-      const target = status.rcPath ?? 'the workspace .envrc'
-      return [
-        `${prefix} The workspace direnv environment is NOT loaded: ${target} is not approved.`,
-        `${prefix} Call the direnv_allow tool with this path to ask the user to approve it:`,
-        `${prefix}   direnv_allow path=${target}`,
-        `${prefix} Workspace: ${workspace}`,
-      ].join('\n')
-    }
-    case 'denied': {
-      const target = status.rcPath ?? 'the workspace .envrc'
-      return [
-        `${prefix} The workspace direnv environment is NOT loaded: ${target} is denied.`,
-        `${prefix} Ask the user to check it with: direnv status`,
-        `${prefix} Workspace: ${workspace}`,
-      ].join('\n')
-    }
-    case 'error':
-      return [
-        `${prefix} The workspace direnv environment is NOT loaded.`,
-        `${prefix} ${status.detail ?? 'direnv could not be consulted.'}`,
-        `${prefix} Workspace: ${workspace}`,
-      ].join('\n')
-  }
+export function sessionContextText(
+	status: DirenvStatus,
+	workspace: string,
+): string | undefined {
+	const prefix = `[${SESSION_CONTEXT_PLUGIN}]`;
+	switch (status.kind) {
+		case "disabled":
+		case "no-rc":
+			return undefined;
+		case "injected": {
+			// Count only names that will be SET; a `.envrc`'s `unset` is not an
+			// injected variable and must not inflate the list or its count.
+			const names = Object.entries(status.env)
+				.filter(([, value]) => value !== undefined)
+				.map(([name]) => name)
+				.sort();
+			const shown = names.slice(0, SESSION_CONTEXT_MAX_NAMES);
+			const hidden = names.length - shown.length;
+			const list =
+				shown.length === 0
+					? "(no variables; this .envrc only unsets names)"
+					: `${shown.join(", ")}${hidden > 0 ? `, and ${String(hidden)} more` : ""}`;
+			return [
+				`${prefix} The workspace direnv environment is active.`,
+				`${prefix} ${status.rcPath ?? "The governing .envrc"} injects ${String(names.length)} variable(s) into every command the agent runs:`,
+				`${prefix}   ${list}`,
+				`${prefix} Values are applied to each command's environment and are deliberately not shown here.`,
+			].join("\n");
+		}
+		case "blocked": {
+			const target = status.rcPath ?? "the workspace .envrc";
+			return [
+				`${prefix} The workspace direnv environment is NOT loaded: ${target} is not approved.`,
+				`${prefix} Call the direnv_allow tool with this path to ask the user to approve it:`,
+				`${prefix}   direnv_allow path=${target}`,
+				`${prefix} Workspace: ${workspace}`,
+			].join("\n");
+		}
+		case "denied": {
+			const target = status.rcPath ?? "the workspace .envrc";
+			return [
+				`${prefix} The workspace direnv environment is NOT loaded: ${target} is denied.`,
+				`${prefix} Ask the user to check it with: direnv status`,
+				`${prefix} Workspace: ${workspace}`,
+			].join("\n");
+		}
+		case "error":
+			return [
+				`${prefix} The workspace direnv environment is NOT loaded.`,
+				`${prefix} ${status.detail ?? "direnv could not be consulted."}`,
+				`${prefix} Workspace: ${workspace}`,
+			].join("\n");
+	}
 }
 
 /**
@@ -733,11 +830,11 @@ export function sessionContextText(status: DirenvStatus, workspace: string): str
  * exists, and fall back to lexical normalization when it does not.
  */
 function canonicalize(path: string): string {
-  try {
-    return realpathSync(path)
-  } catch {
-    return resolvePath(path)
-  }
+	try {
+		return realpathSync(path);
+	} catch {
+		return resolvePath(path);
+	}
 }
 
 /**
@@ -748,12 +845,14 @@ function canonicalize(path: string): string {
  * accept `/ws/../elsewhere/.envrc` and a symlinked `.envrc` pointing outside.
  */
 export function isWithin(root: string, child: string): boolean {
-  assertWorkspace(root)
-  assertWorkspace(child)
-  const realRoot = canonicalize(root)
-  const realChild = canonicalize(child)
-  if (realChild === realRoot) return true
-  return realChild.startsWith(realRoot.endsWith('/') ? realRoot : `${realRoot}/`)
+	assertWorkspace(root);
+	assertWorkspace(child);
+	const realRoot = canonicalize(root);
+	const realChild = canonicalize(child);
+	if (realChild === realRoot) return true;
+	return realChild.startsWith(
+		realRoot.endsWith("/") ? realRoot : `${realRoot}/`,
+	);
 }
 
 /**
@@ -762,26 +861,32 @@ export function isWithin(root: string, child: string): boolean {
  * absolute path to an existing regular file whose basename is a native direnv
  * RC name.
  */
-export function refuseAllow(rcPath: string, workspace: string | undefined, restrict: boolean): string | undefined {
-  if (typeof rcPath !== 'string' || rcPath.length === 0) return 'path must be a non-empty string'
-  if (rcPath.includes('\0')) return 'path must not contain a NUL byte'
-  if (!isAbsolute(rcPath)) return `path must be absolute: ${rcPath}`
-  const base = rcPath.slice(rcPath.lastIndexOf('/') + 1)
-  if (!(RC_NAMES as readonly string[]).includes(base)) {
-    return `path must name one of ${RC_NAMES.join(', ')}: ${rcPath}`
-  }
-  let stat
-  try {
-    stat = statSync(rcPath)
-  } catch {
-    return `file does not exist: ${rcPath}`
-  }
-  if (!stat.isFile()) return `not a regular file: ${rcPath}`
-  if (restrict) {
-    if (workspace === undefined) return 'this call has no workspace, so an absolute path cannot be approved'
-    if (!isWithin(workspace, rcPath)) {
-      return `path is outside the calling workspace (${workspace}): ${rcPath}`
-    }
-  }
-  return undefined
+export function refuseAllow(
+	rcPath: string,
+	workspace: string | undefined,
+	restrict: boolean,
+): string | undefined {
+	if (typeof rcPath !== "string" || rcPath.length === 0)
+		return "path must be a non-empty string";
+	if (rcPath.includes("\0")) return "path must not contain a NUL byte";
+	if (!isAbsolute(rcPath)) return `path must be absolute: ${rcPath}`;
+	const base = rcPath.slice(rcPath.lastIndexOf("/") + 1);
+	if (!(RC_NAMES as readonly string[]).includes(base)) {
+		return `path must name one of ${RC_NAMES.join(", ")}: ${rcPath}`;
+	}
+	let stat;
+	try {
+		stat = statSync(rcPath);
+	} catch {
+		return `file does not exist: ${rcPath}`;
+	}
+	if (!stat.isFile()) return `not a regular file: ${rcPath}`;
+	if (restrict) {
+		if (workspace === undefined)
+			return "this call has no workspace, so an absolute path cannot be approved";
+		if (!isWithin(workspace, rcPath)) {
+			return `path is outside the calling workspace (${workspace}): ${rcPath}`;
+		}
+	}
+	return undefined;
 }

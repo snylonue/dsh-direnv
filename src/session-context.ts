@@ -17,21 +17,21 @@
  *
  * @module dsh-direnv/session-context
  */
-import type { Context } from '@deepseek-ai/cordis'
-import type { Agent } from '@deepseek-ai/dsh-agent'
-import { createUserMessage, type ContextFormed } from '@deepseek-ai/dsh-llm'
-import { SESSION_CONTEXT_PLUGIN, sessionContextText } from './core.js'
+import type { Context } from "@deepseek-ai/cordis";
+import type { Agent } from "@deepseek-ai/dsh-agent";
+import { createUserMessage, type ContextFormed } from "@deepseek-ai/dsh-llm";
+import { SESSION_CONTEXT_PLUGIN, sessionContextText } from "./core.js";
 
-declare module '@deepseek-ai/dsh-llm' {
-  interface MessageSourceMap {
-    'dsh-direnv': { kind: 'dsh-direnv' } & ContextFormed
-  }
+declare module "@deepseek-ai/dsh-llm" {
+	interface MessageSourceMap {
+		"dsh-direnv": { kind: "dsh-direnv" } & ContextFormed;
+	}
 }
 
 /** The session-context listener's disposal boundary. */
 export interface DirenvSessionContextHandle {
-  /** Remove the listener. Idempotent. */
-  dispose(): void
+	/** Remove the listener. Idempotent. */
+	dispose(): void;
 }
 
 /**
@@ -44,41 +44,48 @@ export interface DirenvSessionContextHandle {
  * @param ctx - composition context whose `direnv` service resolves the state.
  * @param agent - the agent whose session just started.
  */
-export async function injectSessionContext(ctx: Context, agent: Agent): Promise<void> {
-  try {
-    if (!ctx.direnv.enabled || !ctx.direnv.settings.sessionContext) return
-    const workspace = ctx.direnv.workspaceFor(agent)
-    if (workspace === undefined) return
+export async function injectSessionContext(
+	ctx: Context,
+	agent: Agent,
+): Promise<void> {
+	try {
+		if (!ctx.direnv.enabled || !ctx.direnv.settings.sessionContext) return;
+		const workspace = ctx.direnv.workspaceFor(agent);
+		if (workspace === undefined) return;
 
-    // No command workdir exists at session start, so the workspace root is the
-    // directory that selects the .envrc — exactly what `followWorkdir` resolves
-    // a command with no workdir to.
-    const probeDir = ctx.direnv.probeDirectory(workspace, undefined)
+		// No command workdir exists at session start, so the workspace root is the
+		// directory that selects the .envrc — exactly what `followWorkdir` resolves
+		// a command with no workdir to.
+		const probeDir = ctx.direnv.probeDirectory(workspace, undefined);
 
-    // Resolving answers the context AND warms the per-directory cache, so the
-    // session's first command reuses this probe.
-    const status = await ctx.direnv.statusFor(probeDir)
-    const text = sessionContextText(status, probeDir)
-    if (text === undefined) return
+		// Resolving answers the context AND warms the per-directory cache, so the
+		// session's first command reuses this probe.
+		const status = await ctx.direnv.statusFor(probeDir);
+		const text = sessionContextText(status, probeDir);
+		if (text === undefined) return;
 
-    agent.inject(createUserMessage({
-      content: [{ type: 'text', text }],
-      // `snapshot` is the form for "current state, where a later snapshot from
-      // the same producer supersedes an earlier one" — a resumed or compacted
-      // session therefore re-publishes instead of accumulating stale copies.
-      source: {
-        kind: SESSION_CONTEXT_PLUGIN,
-        form: 'snapshot',
-        sections: [{ name: SESSION_CONTEXT_PLUGIN, text }],
-      },
-    }))
-  } catch (error) {
-    try {
-      ctx.logger.warn(`dsh-direnv: session-start context failed: ${String(error)}`)
-    } catch {
-      // Logging is itself best-effort; it must never become the failure.
-    }
-  }
+		agent.inject(
+			createUserMessage({
+				content: [{ type: "text", text }],
+				// `snapshot` is the form for "current state, where a later snapshot from
+				// the same producer supersedes an earlier one" — a resumed or compacted
+				// session therefore re-publishes instead of accumulating stale copies.
+				source: {
+					kind: SESSION_CONTEXT_PLUGIN,
+					form: "snapshot",
+					sections: [{ name: SESSION_CONTEXT_PLUGIN, text }],
+				},
+			}),
+		);
+	} catch (error) {
+		try {
+			ctx.logger.warn(
+				`dsh-direnv: session-start context failed: ${String(error)}`,
+			);
+		} catch {
+			// Logging is itself best-effort; it must never become the failure.
+		}
+	}
 }
 
 /**
@@ -94,12 +101,14 @@ export async function injectSessionContext(ctx: Context, agent: Agent): Promise<
  * @param ctx - composition context to listen on and resolve through.
  * @returns the handle that removes the listener.
  */
-export function installDirenvSessionContext(ctx: Context): DirenvSessionContextHandle {
-  const off = ctx.on('agent/created', ({ agent }) => {
-    // Best-effort: the helper contains its own failures, so the promise it
-    // returns can never reject into the lifecycle.
-    void injectSessionContext(ctx, agent)
-    return undefined
-  })
-  return { dispose: () => void off() }
+export function installDirenvSessionContext(
+	ctx: Context,
+): DirenvSessionContextHandle {
+	const off = ctx.on("agent/created", ({ agent }) => {
+		// Best-effort: the helper contains its own failures, so the promise it
+		// returns can never reject into the lifecycle.
+		void injectSessionContext(ctx, agent);
+		return undefined;
+	});
+	return { dispose: () => void off() };
 }

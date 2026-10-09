@@ -1,6 +1,6 @@
 {
-  "meta": {
-    "title": "Direnv",
-    "description": "direnv support for dsh"
-  }
+	"meta": {
+		"title": "Direnv",
+		"description": "direnv support for dsh"
+	}
 }
