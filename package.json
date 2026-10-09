@@ -1,11 +1,13 @@
 {
 	"name": "@snylonue/dsh-direnv",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "Workspace-aware direnv environment injection for DeepSeek Harness, with user-approved .envrc authorization",
 	"icon": "icon.svg",
 	"type": "module",
 	"license": "MIT",
-	"keywords": ["dsh-plugin"],
+	"keywords": [
+		"dsh-plugin"
+	],
 	"repository": "github:snylonue/dsh-direnv",
 	"engines": {
 		"dsh": "^0.2.0-rc.2"
