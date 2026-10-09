@@ -82,7 +82,10 @@ describe("native command execution", () => {
 		const workspace = command(
 			'process.stdin.on("end", () => process.stdout.write("{}")); process.stdin.resume();',
 		);
-		await expect(runExport(workspace, config)).resolves.toMatchObject({ stdout: "{}", stderr: "" });
+		await expect(runExport(workspace, config)).resolves.toMatchObject({
+			stdout: "{}",
+			stderr: "",
+		});
 	});
 
 	it("keeps native exit errors but does not expose command output in status details", async () => {
@@ -90,7 +93,9 @@ describe("native command execution", () => {
 			'process.stdout.write("secret-value"); process.stderr.write("private-diagnostic"); process.exitCode = 7;',
 		);
 		await expect(runExport(workspace, config)).rejects.toMatchObject({
-			code: 7, stdout: "secret-value", stderr: "private-diagnostic",
+			code: 7,
+			stdout: "secret-value",
+			stderr: "private-diagnostic",
 		});
 		const status = await resolveStatus(workspace, config, undefined);
 		expect(status.kind).toBe("error");
@@ -100,7 +105,9 @@ describe("native command execution", () => {
 	});
 
 	it("uses the native stdout buffer limit", async () => {
-		const workspace = command('process.stdout.write("x".repeat(9 * 1024 * 1024));');
+		const workspace = command(
+			'process.stdout.write("x".repeat(9 * 1024 * 1024));',
+		);
 		await expect(runExport(workspace, config)).rejects.toMatchObject({
 			code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
 		});
@@ -265,9 +272,7 @@ describe("isDenied", () => {
 		expect(isDenied(rc, env)).toBe(false);
 
 		// Write the entry exactly as direnv would.
-		const hash = createHash("sha256")
-			.update(`${rc}\n`)
-			.digest("hex");
+		const hash = createHash("sha256").update(`${rc}\n`).digest("hex");
 		mkdirSync(join(data, "direnv", "deny"), { recursive: true });
 		writeFileSync(join(data, "direnv", "deny", hash), `${rc}\n`);
 		expect(isDenied(rc, env)).toBe(true);
@@ -285,9 +290,7 @@ describe("isDenied", () => {
 		const rc = join(home, ".envrc");
 		writeFileSync(rc, "export A=1\n");
 		const env = { HOME: home };
-		const hash = createHash("sha256")
-			.update(`${rc}\n`)
-			.digest("hex");
+		const hash = createHash("sha256").update(`${rc}\n`).digest("hex");
 		mkdirSync(join(home, ".local", "share", "direnv", "deny"), {
 			recursive: true,
 		});
@@ -422,13 +425,21 @@ describe("assertDirenvConfig", () => {
 
 	it("rejects invalid executable strings with a short fixed error", () => {
 		for (const executable of ["", "direnv\0"])
-			expect(() => assertDirenvConfig({ ...defaultConfig, executable }))
-				.toThrow("invalid direnv config");
+			expect(() =>
+				assertDirenvConfig({ ...defaultConfig, executable }),
+			).toThrow("invalid direnv config");
 	});
 
 	it("rejects non-positive, fractional, and non-finite timeouts", () => {
-		for (const probeTimeoutMs of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])
-			expect(() => assertDirenvConfig({ ...defaultConfig, probeTimeoutMs }))
-				.toThrow("invalid direnv config");
+		for (const probeTimeoutMs of [
+			0,
+			-1,
+			1.5,
+			Number.NaN,
+			Number.POSITIVE_INFINITY,
+		])
+			expect(() =>
+				assertDirenvConfig({ ...defaultConfig, probeTimeoutMs }),
+			).toThrow("invalid direnv config");
 	});
 });

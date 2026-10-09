@@ -14,11 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Context, Service } from "@deepseek-ai/cordis";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
-import {
-	envNames,
-	defaultConfig,
-	type DirenvConfig,
-} from "../src/provider.js";
+import { envNames, defaultConfig, type DirenvConfig } from "../src/provider.js";
 import DirenvService from "../src/provider.js";
 import { requireRealProcesses } from "./helpers.js";
 import { installDirenvShellAdapter } from "../src/shell-adapter.js";
@@ -85,7 +81,13 @@ class FakeAgents extends Service {
 
 /** Boot the service with a counting probe, all in the sandbox environment. */
 async function boot(box: Sandbox, overrides: Partial<DirenvConfig> = {}) {
-	for (const name of ["HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "DIRENV_CONFIG"])
+	for (const name of [
+		"HOME",
+		"XDG_DATA_HOME",
+		"XDG_CONFIG_HOME",
+		"XDG_CACHE_HOME",
+		"DIRENV_CONFIG",
+	])
 		vi.stubEnv(name, box.env[name]);
 	const exec = vi.mocked(ChildProcess.execFile);
 	const ctx = new Context();
@@ -107,7 +109,8 @@ async function boot(box: Sandbox, overrides: Partial<DirenvConfig> = {}) {
 	return {
 		ctx,
 		get probes() {
-			return exec.mock.calls.filter(([, args]) => args?.[0] === "export").length;
+			return exec.mock.calls.filter(([, args]) => args?.[0] === "export")
+				.length;
 		},
 		service: ctx.direnv,
 		async dispose() {

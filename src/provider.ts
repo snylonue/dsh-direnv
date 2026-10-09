@@ -150,8 +150,7 @@ export default class DirenvService extends Service {
 	 */
 	probeDirectory(workspace: string, workdir: string | undefined): string {
 		if (!this.config.followWorkdir) return workspace;
-		if (!isAbsolutePath(workdir))
-			return workspace;
+		if (!isAbsolutePath(workdir)) return workspace;
 		return isExistingDirectory(workdir) ? workdir : workspace;
 	}
 
@@ -189,7 +188,9 @@ export default class DirenvService extends Service {
 			rc = await readNativeStatus(probeDir, this.config);
 		} catch (error) {
 			return {
-				kind: "error", env: {}, dropped: [],
+				kind: "error",
+				env: {},
+				dropped: [],
 				detail: error instanceof Error ? error.message : String(error),
 			};
 		}
@@ -202,8 +203,7 @@ export default class DirenvService extends Service {
 
 		const key = `${probeDir}\u0000${stamp}`;
 		const pending =
-			this.inflight.get(key) ??
-			resolveStatus(probeDir, this.config, rc?.path);
+			this.inflight.get(key) ?? resolveStatus(probeDir, this.config, rc?.path);
 		this.inflight.set(key, pending);
 		let status: DirenvStatus;
 		try {

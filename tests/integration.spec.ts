@@ -91,7 +91,13 @@ function direnvEnv(box: Sandbox): NodeJS.ProcessEnv {
 
 function useSandboxEnv(box: Sandbox): void {
 	const env = direnvEnv(box);
-	for (const name of ["HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "DIRENV_CONFIG"])
+	for (const name of [
+		"HOME",
+		"XDG_DATA_HOME",
+		"XDG_CONFIG_HOME",
+		"XDG_CACHE_HOME",
+		"DIRENV_CONFIG",
+	])
 		vi.stubEnv(name, env[name]);
 }
 
@@ -261,11 +267,13 @@ async function boot(
 ): Promise<Booted> {
 	useSandboxEnv(box);
 	if (probe !== undefined) {
-		const { execFile: exec } = await vi.importActual<typeof ChildProcess>("node:child_process");
-		vi.mocked(ChildProcess.execFile).mockImplementation((command, args, opts, callback) =>
-			args?.[0] === "export"
-				? completeCommand(probe(), callback, new ChildProcess.ChildProcess())
-				: exec(command, args, opts, callback),
+		const { execFile: exec } =
+			await vi.importActual<typeof ChildProcess>("node:child_process");
+		vi.mocked(ChildProcess.execFile).mockImplementation(
+			(command, args, opts, callback) =>
+				args?.[0] === "export"
+					? completeCommand(probe(), callback, new ChildProcess.ChildProcess())
+					: exec(command, args, opts, callback),
 		);
 	}
 	const ctx = new Context();
@@ -337,10 +345,12 @@ describeReal("native RC discovery", () => {
 		const box = sandbox();
 		useSandboxEnv(box);
 		writeRc(box, ".", "export A=1\n", false);
-		await expect(readNativeStatus(box.workspace, {
-			...defaultConfig,
-			executable: "/nonexistent/direnv",
-		})).rejects.toThrow("ENOENT");
+		await expect(
+			readNativeStatus(box.workspace, {
+				...defaultConfig,
+				executable: "/nonexistent/direnv",
+			}),
+		).rejects.toThrow("ENOENT");
 	});
 });
 

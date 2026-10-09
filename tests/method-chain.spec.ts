@@ -131,14 +131,10 @@ describe("installChainLink", () => {
 	it("preserves the receiver and the argument list", () => {
 		const target = new Greeter();
 		let seen: unknown;
-		const link = installChainLink(
-			target,
-			"greet",
-			(next, thisArg, args) => {
-				seen = { thisArg, args };
-				return next();
-			},
-		);
+		const link = installChainLink(target, "greet", (next, thisArg, args) => {
+			seen = { thisArg, args };
+			return next();
+		});
 		target.greet("x");
 		expect(seen).toEqual({ thisArg: target, args: ["x"] });
 		link.dispose();

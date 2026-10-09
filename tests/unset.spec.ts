@@ -71,8 +71,7 @@ describeReal("unset semantics against a real child", () => {
 			const result = await (
 				await ctx.shell.execute(
 					ctx.shell.resolve({
-						command:
-							`printf "[%s]|[%s]" "\${INHERITED_VAR-unset}" "\${ADDED-unset}"`,
+						command: `printf "[%s]|[%s]" "\${INHERITED_VAR-unset}" "\${ADDED-unset}"`,
 					} as never),
 				)
 			).result();

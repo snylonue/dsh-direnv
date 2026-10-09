@@ -15,12 +15,7 @@ import { execFileNoStdin } from "./process.js";
 import { createHash } from "node:crypto";
 import { statSync } from "node:fs";
 // resolvePath is used by the deny-store hash, which mirrors direnv's own.
-import {
-	basename,
-	isAbsolute,
-	join,
-	resolve as resolvePath,
-} from "node:path";
+import { basename, isAbsolute, join, resolve as resolvePath } from "node:path";
 import { realpathSync } from "node:fs";
 import { DSH_ENV_PREFIX } from "@deepseek-ai/dsh-shell";
 
@@ -261,14 +256,16 @@ export async function readNativeStatus(
 	assertAbsolutePath(workspace);
 	let stdout: string;
 	try {
-		stdout = (await execFileNoStdin(config.executable, ["status", "--json"], {
-			cwd: workspace,
-			timeout: config.probeTimeoutMs,
-			maxBuffer: 1024 * 1024,
-			killSignal: "SIGKILL",
-			encoding: "utf8",
-			windowsHide: true,
-		})).stdout;
+		stdout = (
+			await execFileNoStdin(config.executable, ["status", "--json"], {
+				cwd: workspace,
+				timeout: config.probeTimeoutMs,
+				maxBuffer: 1024 * 1024,
+				killSignal: "SIGKILL",
+				encoding: "utf8",
+				windowsHide: true,
+			})
+		).stdout;
 	} catch (error) {
 		const failure = error as ExecFileException;
 		throw new Error(
@@ -280,12 +277,13 @@ export async function readNativeStatus(
 	}
 	try {
 		const rc = JSON.parse(stdout)?.state?.foundRC;
-		if (rc !== null && (
-			!isAbsolutePath(rc?.path) || !isInteger(rc.allowed)
-		)) throw new Error();
+		if (rc !== null && (!isAbsolutePath(rc?.path) || !isInteger(rc.allowed)))
+			throw new Error();
 		return rc;
 	} catch {
-		throw new Error("direnv status produced output this plugin could not parse");
+		throw new Error(
+			"direnv status produced output this plugin could not parse",
+		);
 	}
 }
 
@@ -451,9 +449,12 @@ export async function resolveStatus(
 		stdout = (await runExport(workspace, config)).stdout;
 	} catch (error) {
 		const failure = error as ExecFileException & { stderr?: string };
-		const blocked = typeof failure.code === "number" && looksBlocked(failure.stderr ?? "");
+		const blocked =
+			typeof failure.code === "number" && looksBlocked(failure.stderr ?? "");
 		return {
-			kind: blocked ? "blocked" : "error", env: {}, dropped: [],
+			kind: blocked ? "blocked" : "error",
+			env: {},
+			dropped: [],
 			...(rcPath === undefined ? {} : { rcPath }),
 			detail: blocked
 				? "the workspace .envrc is not approved; native direnv refused to load it"

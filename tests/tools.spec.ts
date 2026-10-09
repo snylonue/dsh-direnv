@@ -180,20 +180,35 @@ async function harness(
 		stdout: "",
 		stderr: options.allowStderr ?? "",
 	}));
-	vi.spyOn(Core, "readNativeStatus").mockResolvedValue({ path: rcPath, allowed: 0 });
-	const { execFile: exec } = await vi.importActual<typeof ChildProcess>("node:child_process");
-	vi.mocked(ChildProcess.execFile).mockImplementation((command, args, opts, callback) => {
-		if (args?.[0] === "allow")
-			return completeCommand(
-				{ ...allowSpy(String(args[1])), signal: null }, callback, new ChildProcess.ChildProcess(),
-			);
-		if (args?.[0] !== "export") return exec(command, args, opts, callback);
-		const dir = String(opts?.cwd);
-		options.probed?.push(dir);
-		return completeCommand({
-			code: 0, signal: null, stdout: options.exportFor?.(dir) ?? "{}", stderr: "",
-		}, callback, new ChildProcess.ChildProcess());
+	vi.spyOn(Core, "readNativeStatus").mockResolvedValue({
+		path: rcPath,
+		allowed: 0,
 	});
+	const { execFile: exec } =
+		await vi.importActual<typeof ChildProcess>("node:child_process");
+	vi.mocked(ChildProcess.execFile).mockImplementation(
+		(command, args, opts, callback) => {
+			if (args?.[0] === "allow")
+				return completeCommand(
+					{ ...allowSpy(String(args[1])), signal: null },
+					callback,
+					new ChildProcess.ChildProcess(),
+				);
+			if (args?.[0] !== "export") return exec(command, args, opts, callback);
+			const dir = String(opts?.cwd);
+			options.probed?.push(dir);
+			return completeCommand(
+				{
+					code: 0,
+					signal: null,
+					stdout: options.exportFor?.(dir) ?? "{}",
+					stderr: "",
+				},
+				callback,
+				new ChildProcess.ChildProcess(),
+			);
+		},
+	);
 	const providerFiber = await ctx.plugin(
 		class extends DirenvService {
 			constructor(applyCtx: Context) {

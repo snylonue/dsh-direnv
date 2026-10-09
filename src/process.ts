@@ -1,4 +1,7 @@
-import { execFile, type ExecFileOptionsWithStringEncoding } from "node:child_process";
+import {
+	execFile,
+	type ExecFileOptionsWithStringEncoding,
+} from "node:child_process";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);

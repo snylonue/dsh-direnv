@@ -192,14 +192,19 @@ async function boot(
 	vi.stubEnv("XDG_CONFIG_HOME", join(root, "config"));
 	vi.stubEnv("XDG_CACHE_HOME", join(root, "cache"));
 	vi.stubEnv("DIRENV_CONFIG", join(root, "config", "direnv"));
-	const { execFile: exec } = await vi.importActual<typeof ChildProcess>("node:child_process");
-	vi.mocked(ChildProcess.execFile).mockImplementation((command, args, opts, callback) => {
-		if (args?.[0] !== "export") return exec(command, args, opts, callback);
-		probeCalls += 1;
-		return completeCommand(
-			(options.probe ?? (() => exported({})))(), callback, new ChildProcess.ChildProcess(),
-		);
-	});
+	const { execFile: exec } =
+		await vi.importActual<typeof ChildProcess>("node:child_process");
+	vi.mocked(ChildProcess.execFile).mockImplementation(
+		(command, args, opts, callback) => {
+			if (args?.[0] !== "export") return exec(command, args, opts, callback);
+			probeCalls += 1;
+			return completeCommand(
+				(options.probe ?? (() => exported({})))(),
+				callback,
+				new ChildProcess.ChildProcess(),
+			);
+		},
+	);
 	const config: DirenvConfig = { ...defaultConfig, ...options.config };
 	const fiber = await ctx.plugin(
 		class extends DirenvService {
@@ -257,7 +262,8 @@ describe("injectSessionContext", () => {
 		try {
 			await injectSessionContext(app.ctx, app.agent);
 			expect(app.injected).toHaveLength(1);
-			const text = (app.injected[0]?.content[0] as { text: string } | undefined)?.text;
+			const text = (app.injected[0]?.content[0] as { text: string } | undefined)
+				?.text;
 			expect(text).toContain(`direnv_allow path=${rcPath}`);
 		} finally {
 			await app.dispose();
