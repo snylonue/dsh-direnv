@@ -9,7 +9,7 @@
 # without an explicit user decision through the approval channel.
 - insert:
     - id: direnv
-      name: dsh-direnv
+      name: "@snylonue/dsh-direnv"
       config:
         executable: direnv
         enabled: true
@@ -20,6 +20,6 @@
         followWorkdir: true
         cache: true
     - id: direnv-integration
-      name: dsh-direnv/integration-plugin
+      name: "@snylonue/dsh-direnv/integration-plugin"
     - id: direnv-tools
-      name: dsh-direnv/tools
+      name: "@snylonue/dsh-direnv/tools"
