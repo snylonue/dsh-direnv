@@ -17,6 +17,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as fs from "node:fs";
 import {
 	isWithin,
+	isAbsolutePath,
+	assertAbsolutePath,
 	parseExport,
 	refuseAllow,
 	selectInjectable,
@@ -42,6 +44,28 @@ afterEach(() => {
 	vi.restoreAllMocks();
 	for (const dir of created.splice(0))
 		rmSync(dir, { recursive: true, force: true });
+});
+
+describe("absolute path validation", () => {
+	it("accepts absolute paths without inspecting files", () => {
+		const value: unknown = "/missing/.envrc";
+		if (!isAbsolutePath(value)) throw new Error("expected an absolute path");
+		const path: string = value;
+		expect(path).toBe("/missing/.envrc");
+	});
+
+	it("rejects invalid paths consistently", () => {
+		for (const value of [undefined, null, 1, {}, "", ".envrc", "/ws/a\0b"])
+			expect(isAbsolutePath(value)).toBe(false);
+	});
+	it("asserts the same path rules with a short fixed error", () => {
+		const value: unknown = "/missing/.envrc";
+		assertAbsolutePath(value);
+		const path: string = value;
+		expect(path).toBe("/missing/.envrc");
+		for (const invalid of [null, 1, {}, "", ".envrc", "/ws/a\0b"])
+			expect(() => assertAbsolutePath(invalid)).toThrow("invalid path");
+	});
 });
 
 describe("parseExport", () => {
@@ -285,7 +309,7 @@ describe("refuseAllow", () => {
 
 	it("refuses relative paths and wrong basenames, leaving file checks to direnv", () => {
 		const ws = scratch();
-		expect(refuseAllow(".envrc", ws, true)).toMatch(/must be absolute/);
+		expect(refuseAllow(".envrc", ws, true)).toBe("invalid path");
 		expect(refuseAllow(join(ws, "evil.sh"), ws, true)).toMatch(
 			/must name one of/,
 		);
@@ -357,15 +381,15 @@ describe("assertDirenvConfig", () => {
 		expect(() => assertDirenvConfig(defaultConfig)).not.toThrow();
 	});
 
-	it("rejects an empty executable and bad timeout", () => {
-		expect(() =>
-			assertDirenvConfig({ ...defaultConfig, executable: "" }),
-		).toThrow(TypeError);
-		expect(() =>
-			assertDirenvConfig({ ...defaultConfig, probeTimeoutMs: 0 }),
-		).toThrow(TypeError);
-		expect(() =>
-			assertDirenvConfig({ ...defaultConfig, probeTimeoutMs: 1.5 }),
-		).toThrow(TypeError);
+	it("rejects invalid executable strings with a short fixed error", () => {
+		for (const executable of ["", "direnv\0"])
+			expect(() => assertDirenvConfig({ ...defaultConfig, executable }))
+				.toThrow("invalid direnv config");
+	});
+
+	it("rejects non-positive, fractional, and non-finite timeouts", () => {
+		for (const probeTimeoutMs of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])
+			expect(() => assertDirenvConfig({ ...defaultConfig, probeTimeoutMs }))
+				.toThrow("invalid direnv config");
 	});
 });

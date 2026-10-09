@@ -138,35 +138,38 @@ export interface DirenvStatus {
 	detail?: string;
 }
 
-function assertNonEmpty(value: string, what: string): void {
-	if (typeof value !== "string" || value.length === 0)
-		throw new TypeError(`dsh-direnv: ${what} must be a non-empty string`);
+function isNonEmptyString(value: unknown): value is string {
+	return typeof value === "string" && value.length > 0;
 }
 
-function assertNoNul(value: string, what: string): void {
-	if (value.includes("\0"))
-		throw new TypeError(`dsh-direnv: ${what} must not contain a NUL byte`);
+function isNulFreeString(value: unknown): value is string {
+	return typeof value === "string" && !value.includes("\0");
+}
+
+function isInteger(value: unknown): value is number {
+	return typeof value === "number" && Number.isInteger(value);
 }
 
 /** Validate the semantic config invariants the schema cannot express. */
 export function assertDirenvConfig(config: DirenvConfig): void {
-	assertNonEmpty(config.executable, "config.executable");
-	assertNoNul(config.executable, "config.executable");
-	if (!Number.isInteger(config.probeTimeoutMs) || config.probeTimeoutMs <= 0) {
-		throw new TypeError(
-			"dsh-direnv: config.probeTimeoutMs must be a positive integer",
-		);
+	if (
+		!isNonEmptyString(config.executable) ||
+		!isNulFreeString(config.executable) ||
+		!isInteger(config.probeTimeoutMs) ||
+		config.probeTimeoutMs <= 0
+	) {
+		throw new TypeError("invalid direnv config");
 	}
 }
 
-/** An absolute directory this plugin may probe. */
-export function assertWorkspace(workspace: string): void {
-	assertNonEmpty(workspace, "workspace");
-	assertNoNul(workspace, "workspace");
-	if (!isAbsolute(workspace))
-		throw new TypeError(
-			`dsh-direnv: workspace must be an absolute path: ${workspace}`,
-		);
+export function isAbsolutePath(value: unknown): value is string {
+	return isNulFreeString(value) && isAbsolute(value);
+}
+
+export function assertAbsolutePath(value: unknown): asserts value is string {
+	if (!isAbsolutePath(value)) {
+		throw new TypeError("invalid path");
+	}
 }
 
 /**
@@ -361,7 +364,7 @@ export const runExport: ExportRunner = async (
 	workspace,
 	config: ExportConfig,
 ) => {
-	assertWorkspace(workspace);
+	assertAbsolutePath(workspace);
 	return runChild(config.executable, ["export", "json"], {
 		cwd: workspace,
 		env: config.env ?? process.env,
@@ -381,7 +384,7 @@ export async function readNativeStatus(
 	workspace: string,
 	config: ExportConfig,
 ): Promise<NativeRc | null> {
-	assertWorkspace(workspace);
+	assertAbsolutePath(workspace);
 	const result = await runChild(config.executable, ["status", "--json"], {
 		cwd: workspace,
 		env: config.env ?? process.env,
@@ -397,10 +400,7 @@ export async function readNativeStatus(
 	try {
 		const rc = JSON.parse(result.stdout)?.state?.foundRC;
 		if (rc !== null && (
-			typeof rc?.path !== "string" ||
-			!isAbsolute(rc.path) ||
-			rc.path.includes("\0") ||
-			!Number.isInteger(rc.allowed)
+			!isAbsolutePath(rc?.path) || !isInteger(rc.allowed)
 		)) throw new Error();
 		return rc;
 	} catch {
@@ -485,7 +485,7 @@ export function selectInjectable(diff: Record<string, DiffEntry>): {
 			env[name] = undefined;
 			continue;
 		}
-		if (value.includes("\0")) {
+		if (!isNulFreeString(value)) {
 			dropped.push(name);
 			continue;
 		}
@@ -795,8 +795,8 @@ function canonicalize(path: string): string {
  * accept `/ws/../elsewhere/.envrc` and a symlinked `.envrc` pointing outside.
  */
 export function isWithin(root: string, child: string): boolean {
-	assertWorkspace(root);
-	assertWorkspace(child);
+	assertAbsolutePath(root);
+	assertAbsolutePath(child);
 	const realRoot = canonicalize(root);
 	const realChild = canonicalize(child);
 	if (realChild === realRoot) return true;
@@ -815,10 +815,7 @@ export function refuseAllow(
 	workspace: string | undefined,
 	restrict: boolean,
 ): string | undefined {
-	if (typeof rcPath !== "string" || rcPath.length === 0)
-		return "path must be a non-empty string";
-	if (rcPath.includes("\0")) return "path must not contain a NUL byte";
-	if (!isAbsolute(rcPath)) return `path must be absolute: ${rcPath}`;
+	if (!isAbsolutePath(rcPath)) return "invalid path";
 	if (!(RC_NAMES as readonly string[]).includes(basename(rcPath))) {
 		return `path must name one of ${RC_NAMES.join(", ")}: ${rcPath}`;
 	}

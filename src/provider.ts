@@ -19,7 +19,7 @@
  *
  * @module dsh-direnv
  */
-import { dirname, isAbsolute, resolve as resolvePath } from "node:path";
+import { dirname, resolve as resolvePath } from "node:path";
 import { Service, type Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import z from "@deepseek-ai/schemastery";
@@ -31,6 +31,7 @@ import {
 	describeStatus,
 	readNativeStatus,
 	isExistingDirectory,
+	isAbsolutePath,
 	refuseAllow,
 	resolveStatus,
 	runChild,
@@ -147,8 +148,7 @@ export default class DirenvService extends Service {
 	 */
 	workspaceFor(agent: Agent): string | undefined {
 		const cwd = agent.session?.header.cwd;
-		if (typeof cwd !== "string" || cwd.length === 0 || !isAbsolute(cwd))
-			return undefined;
+		if (!isAbsolutePath(cwd)) return undefined;
 		return resolvePath(cwd);
 	}
 
@@ -160,7 +160,7 @@ export default class DirenvService extends Service {
 	 */
 	probeDirectory(workspace: string, workdir: string | undefined): string {
 		if (!this.config.followWorkdir) return workspace;
-		if (workdir === undefined || workdir.length === 0 || !isAbsolute(workdir))
+		if (!isAbsolutePath(workdir))
 			return workspace;
 		return isExistingDirectory(workdir) ? workdir : workspace;
 	}
