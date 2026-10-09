@@ -567,10 +567,8 @@ export function sessionContextText(
 					? "(no variables; this .envrc only unsets names)"
 					: `${shown.join(", ")}${hidden > 0 ? `, and ${String(hidden)} more` : ""}`;
 			return [
-				`${prefix} The workspace direnv environment is active.`,
 				`${prefix} ${status.rcPath ?? "The governing .envrc"} injects ${String(names.length)} variable(s) into every command the agent runs:`,
 				`${prefix}   ${list}`,
-				`${prefix} Values are applied to each command's environment and are deliberately not shown here.`,
 			].join("\n");
 		}
 		case "blocked": {
