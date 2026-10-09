@@ -295,6 +295,22 @@ const describeReal = requireRealProcesses("real-direnv tests")
 	: describe.skip;
 
 describeReal("direnv injection (real direnv)", () => {
+	it("leaves a missing approval target for direnv to reject", async () => {
+		const box = sandbox();
+		const app = await boot(box);
+		try {
+			const result = await app.ctx.direnv.approve(
+				join(box.workspace, ".envrc"),
+				box.workspace,
+			);
+			expect(result.ok).toBe(false);
+			if (result.ok) throw new Error("direnv allowed a missing file");
+			expect(result.reason).toContain("direnv allow exited with code");
+		} finally {
+			await app.dispose();
+		}
+	});
+
 	it("injects an allowed .envrc into the executed shell spec", async () => {
 		const box = sandbox();
 		writeRc(box, ".", 'export E2E_ONE=alpha\nexport E2E_TWO="a b"\n');

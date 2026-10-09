@@ -13,12 +13,12 @@ import { createHash } from "node:crypto";
 import { dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import * as fs from "node:fs";
 import {
 	findRcPath,
 	isWithin,
 	parseExport,
-	previewRc,
 	refuseAllow,
 	selectInjectable,
 	looksBlocked,
@@ -29,6 +29,10 @@ import {
 	defaultConfig,
 } from "../src/core.js";
 
+vi.mock("node:fs", async (importOriginal) => ({
+	...(await importOriginal<typeof import("node:fs")>()),
+}));
+
 const created: string[] = [];
 function scratch(): string {
 	const dir = mkdtempSync(join(tmpdir(), "dsh-direnv-core-"));
@@ -36,6 +40,7 @@ function scratch(): string {
 	return dir;
 }
 afterEach(() => {
+	vi.restoreAllMocks();
 	for (const dir of created.splice(0))
 		rmSync(dir, { recursive: true, force: true });
 });
@@ -315,49 +320,6 @@ describe("looksBlocked", () => {
 	});
 });
 
-describe("previewRc", () => {
-	it("hashes the full file while showing only the bounded head", () => {
-		const dir = scratch();
-		const rc = join(dir, ".envrc");
-		const body = `export A=${"x".repeat(5000)}\n`;
-		writeFileSync(rc, body);
-		const preview = previewRc(rc, 100);
-		expect(preview.bytes).toBe(Buffer.byteLength(body));
-		expect(preview.truncated).toBe(true);
-		expect(preview.text.length).toBe(100);
-		// Same file, larger budget -> same digest, longer text.
-		const full = previewRc(rc, 1_000_000);
-		expect(full.sha256).toBe(preview.sha256);
-		expect(full.truncated).toBe(false);
-		expect(full.text).toBe(body);
-	});
-
-	it("changes the digest when the content changes, at a stable size", () => {
-		const dir = scratch();
-		const rc = join(dir, ".envrc");
-		writeFileSync(rc, "export A=1\n");
-		const first = previewRc(rc, 1024);
-		writeFileSync(rc, "export A=2\n");
-		const second = previewRc(rc, 1024);
-		expect(second.bytes).toBe(first.bytes);
-		expect(second.sha256).not.toBe(first.sha256);
-	});
-
-	it("reports an empty file as empty rather than truncated", () => {
-		const dir = scratch();
-		const rc = join(dir, ".envrc");
-		writeFileSync(rc, "");
-		const preview = previewRc(rc, 64);
-		expect(preview.bytes).toBe(0);
-		expect(preview.text).toBe("");
-		expect(preview.truncated).toBe(false);
-	});
-
-	it("throws for a missing file", () => {
-		expect(() => previewRc(join(scratch(), ".envrc"), 64)).toThrow();
-	});
-});
-
 describe("refuseAllow", () => {
 	it("accepts an absolute .envrc inside the workspace", () => {
 		const ws = scratch();
@@ -375,7 +337,7 @@ describe("refuseAllow", () => {
 		expect(refuseAllow(rc, ws, false)).toBeUndefined();
 	});
 
-	it("refuses a nested path inside the workspace by default", () => {
+	it("accepts a nested path inside the workspace", () => {
 		const ws = scratch();
 		mkdirSync(join(ws, "sub"));
 		const rc = join(ws, "sub", ".envrc");
@@ -383,17 +345,15 @@ describe("refuseAllow", () => {
 		expect(refuseAllow(rc, ws, true)).toBeUndefined();
 	});
 
-	it("refuses relative paths, wrong basenames, missing files, and directories", () => {
+	it("refuses relative paths and wrong basenames, leaving file checks to direnv", () => {
 		const ws = scratch();
 		expect(refuseAllow(".envrc", ws, true)).toMatch(/must be absolute/);
 		expect(refuseAllow(join(ws, "evil.sh"), ws, true)).toMatch(
 			/must name one of/,
 		);
-		expect(refuseAllow(join(ws, ".envrc"), ws, true)).toMatch(/does not exist/);
+		expect(refuseAllow(join(ws, ".envrc"), ws, true)).toBeUndefined();
 		mkdirSync(join(ws, ".env"));
-		expect(refuseAllow(join(ws, ".env"), ws, true)).toMatch(
-			/not a regular file/,
-		);
+		expect(refuseAllow(join(ws, ".env"), ws, true)).toBeUndefined();
 	});
 
 	it("refuses any absolute path when the call has no workspace", () => {
@@ -401,6 +361,16 @@ describe("refuseAllow", () => {
 		const rc = join(dir, ".envrc");
 		writeFileSync(rc, "export A=1\n");
 		expect(refuseAllow(rc, undefined, true)).toMatch(/no workspace/);
+	});
+
+	it("checks path policy without inspecting the target file", () => {
+		const ws = scratch();
+		const rc = join(scratch(), ".envrc");
+		const stat = vi.spyOn(fs, "statSync");
+		expect(refuseAllow(rc, ws, true)).toMatch(/outside the calling workspace/);
+		expect(refuseAllow(rc, undefined, true)).toMatch(/no workspace/);
+		expect(refuseAllow(join(ws, ".envrc"), ws, true)).toBeUndefined();
+		expect(stat).not.toHaveBeenCalled();
 	});
 });
 
@@ -449,7 +419,7 @@ describe("assertDirenvConfig", () => {
 		expect(() => assertDirenvConfig(defaultConfig)).not.toThrow();
 	});
 
-	it("rejects an empty executable, bad timeout, and bad preview budget", () => {
+	it("rejects an empty executable and bad timeout", () => {
 		expect(() =>
 			assertDirenvConfig({ ...defaultConfig, executable: "" }),
 		).toThrow(TypeError);
@@ -458,9 +428,6 @@ describe("assertDirenvConfig", () => {
 		).toThrow(TypeError);
 		expect(() =>
 			assertDirenvConfig({ ...defaultConfig, probeTimeoutMs: 1.5 }),
-		).toThrow(TypeError);
-		expect(() =>
-			assertDirenvConfig({ ...defaultConfig, previewBytes: -1 }),
 		).toThrow(TypeError);
 	});
 });

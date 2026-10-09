@@ -10,8 +10,8 @@
  *   `allowed-once` proceeds, and every other outcome — rejection, cancellation,
  *   or an unavailable channel — refuses before anything runs. The model never
  *   supplies the file contents and cannot approve anything by itself: it names a
- *   path, the user sees the path plus a bounded preview and the file's SHA-256,
- *   and direnv performs the write. The tool is additionally confined to the
+ *   path, asks for user consent, and lets direnv perform the write.
+ *   The tool is additionally confined to the
  *   calling agent's own workspace by default.
  *
  * - `direnv_reload` re-resolves one workspace (or every cached workspace) now,
@@ -26,7 +26,6 @@ import { dirname } from "node:path";
 import type { Context } from "@deepseek-ai/cordis";
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import z from "@deepseek-ai/schemastery";
-import { previewRc } from "./core.js";
 import { envNames } from "./provider.js";
 
 export const name = "direnv-tools";
@@ -42,15 +41,6 @@ export const inject = ["tools", "systemPrompt", "direnv"];
 export type Config = Record<string, never>;
 export const Config = z.object({}) as z<Config>;
 
-/** Indent a preview block so a multi-line `.envrc` stays readable in a one-line reason. */
-function indent(text: string, prefix = "    | "): string {
-	if (text.length === 0) return `${prefix}(empty file)`;
-	return text
-		.split("\n")
-		.map((line) => `${prefix}${line}`)
-		.join("\n");
-}
-
 export function apply(ctx: Context): void {
 	ctx.tools.register(
 		defineTool({
@@ -58,7 +48,7 @@ export function apply(ctx: Context): void {
 			description: [
 				"Ask the user to approve a workspace direnv file (.envrc or .env) so its variables load into future commands.",
 				"Call it only when a command result carries a [dsh-direnv] blocked notice, or when the user explicitly asks.",
-				"The user sees the path, SHA-256, and a preview; approving covers exactly the current content, so editing the file afterwards needs a new approval.",
+				"User approval is required; changing the file after direnv authorizes it requires a new approval.",
 			].join(" "),
 			parameters: {
 				path: {
@@ -82,7 +72,6 @@ export function apply(ctx: Context): void {
 							properties: {
 								outcome: { type: "string", required: true, const: "approved" },
 								path: { type: "string", required: true },
-								sha256: { type: "string", required: true },
 								variables: { type: "integer", required: true },
 								detail: { type: "string", required: true },
 							},
@@ -140,20 +129,13 @@ export function apply(ctx: Context): void {
 					};
 				}
 
-				const preview = previewRc(path, ctx.direnv.settings.previewBytes);
 				const reason = [
 					args.reason === undefined || args.reason.trim().length === 0
 						? undefined
 						: args.reason.trim(),
 					`Approve this direnv file so its environment loads into future commands?`,
-					`  path:   ${preview.path}`,
-					`  size:   ${preview.bytes} bytes`,
-					`  sha256: ${preview.sha256}`,
-					preview.truncated
-						? `  contents (first ${ctx.direnv.settings.previewBytes} bytes):`
-						: "  contents:",
-					indent(preview.text),
-					"Approving authorizes exactly this content; editing the file afterwards requires a new approval.",
+					`  path: ${path}`,
+					"Changing the file after direnv authorizes it requires a new approval.",
 				]
 					.filter((part): part is string => part !== undefined)
 					.join("\n");
@@ -207,7 +189,6 @@ export function apply(ctx: Context): void {
 				return {
 					outcome: "approved" as const,
 					path,
-					sha256: preview.sha256,
 					variables,
 					detail: [
 						`dsh-direnv: approved ${path}.`,

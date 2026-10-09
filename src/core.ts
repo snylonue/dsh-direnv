@@ -12,9 +12,10 @@
  */
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { closeSync, openSync, readSync, statSync, type Stats } from "node:fs";
+import { statSync } from "node:fs";
 // resolvePath is used by the deny-store hash, which mirrors direnv's own.
 import {
+	basename,
 	dirname,
 	isAbsolute,
 	join,
@@ -100,8 +101,6 @@ export interface DirenvConfig {
 	 * for an allowed `.envrc` — and no cache exists to reason about.
 	 */
 	cache: boolean;
-	/** Maximum `.envrc` bytes shown to the user in the approval prompt. */
-	previewBytes: number;
 }
 
 /** The plan's defaults. */
@@ -114,7 +113,6 @@ export const defaultConfig: DirenvConfig = {
 	restrictAllowToWorkspace: true,
 	followWorkdir: true,
 	cache: true,
-	previewBytes: 2_048,
 };
 
 /** Why a workspace produced no injectable environment. */
@@ -160,11 +158,6 @@ export function assertDirenvConfig(config: DirenvConfig): void {
 	if (!Number.isInteger(config.probeTimeoutMs) || config.probeTimeoutMs <= 0) {
 		throw new TypeError(
 			"dsh-direnv: config.probeTimeoutMs must be a positive integer",
-		);
-	}
-	if (!Number.isInteger(config.previewBytes) || config.previewBytes < 0) {
-		throw new TypeError(
-			"dsh-direnv: config.previewBytes must be a non-negative integer",
 		);
 	}
 }
@@ -256,57 +249,6 @@ export function isExistingDirectory(path: string): boolean {
 		return statSync(path).isDirectory();
 	} catch {
 		return false;
-	}
-}
-
-/** One bounded, hash-stable view of the file a user is asked to approve. */
-export interface RcPreview {
-	path: string;
-	/** Lowercase hex SHA-256 of the full file bytes. */
-	sha256: string;
-	/** Total file size in bytes. */
-	bytes: number;
-	/** The leading bytes, decoded as UTF-8, bounded by the configured budget. */
-	text: string;
-	/** True when `text` is shorter than the file. */
-	truncated: boolean;
-}
-
-/**
- * Read a bounded preview of one RC file. Never throws for a missing file —
- * callers turn that into a refusal — and never reads more than `maxBytes`
- * beyond the hash pass.
- */
-export function previewRc(rcPath: string, maxBytes: number): RcPreview {
-	assertNonEmpty(rcPath, "rcPath");
-	const stat = statSync(rcPath);
-	if (!stat.isFile())
-		throw new TypeError(`dsh-direnv: not a regular file: ${rcPath}`);
-	const fd = openSync(rcPath, "r");
-	try {
-		const hash = createHash("sha256");
-		const head = Buffer.alloc(Math.max(0, maxBytes));
-		let headBytes = 0;
-		const chunk = Buffer.alloc(64 * 1024);
-		for (;;) {
-			const read = readSync(fd, chunk, 0, chunk.length, null);
-			if (read <= 0) break;
-			hash.update(chunk.subarray(0, read));
-			if (headBytes < head.length) {
-				const take = Math.min(head.length - headBytes, read);
-				chunk.copy(head, headBytes, 0, take);
-				headBytes += take;
-			}
-		}
-		return {
-			path: rcPath,
-			sha256: hash.digest("hex"),
-			bytes: stat.size,
-			text: head.subarray(0, headBytes).toString("utf8"),
-			truncated: stat.size > headBytes,
-		};
-	} finally {
-		closeSync(fd);
 	}
 }
 
@@ -856,10 +798,9 @@ export function isWithin(root: string, child: string): boolean {
 }
 
 /**
- * Validate that `rcPath` is an approvable direnv file. Returns the refusal
- * reason, or `undefined` when the path is acceptable. Deliberately narrow: an
- * absolute path to an existing regular file whose basename is a native direnv
- * RC name.
+ * Enforce the tool's explicit-path and workspace policy before asking for consent.
+ * File existence, file type, and authorization errors are left to direnv.
+ * Returns a refusal reason, or `undefined` when these preconditions hold.
  */
 export function refuseAllow(
 	rcPath: string,
@@ -870,17 +811,9 @@ export function refuseAllow(
 		return "path must be a non-empty string";
 	if (rcPath.includes("\0")) return "path must not contain a NUL byte";
 	if (!isAbsolute(rcPath)) return `path must be absolute: ${rcPath}`;
-	const base = rcPath.slice(rcPath.lastIndexOf("/") + 1);
-	if (!(RC_NAMES as readonly string[]).includes(base)) {
+	if (!(RC_NAMES as readonly string[]).includes(basename(rcPath))) {
 		return `path must name one of ${RC_NAMES.join(", ")}: ${rcPath}`;
 	}
-	let stat: Stats;
-	try {
-		stat = statSync(rcPath);
-	} catch {
-		return `file does not exist: ${rcPath}`;
-	}
-	if (!stat.isFile()) return `not a regular file: ${rcPath}`;
 	if (restrict) {
 		if (workspace === undefined)
 			return "this call has no workspace, so an absolute path cannot be approved";

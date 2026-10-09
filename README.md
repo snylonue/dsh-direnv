@@ -13,7 +13,7 @@ environment, and a blocked `.envrc` produces an actionable notice plus a
 | **Per workspace** | the workspace comes from the calling agent's session cwd; the command's own `workdir` selects a nested `.envrc`, like native direnv |
 | **Announces at startup** | starting a session injects one model-facing snapshot naming the workspace's direnv variables, or why none loaded; values are never included and a workspace with no `.envrc` stays silent |
 | **Never wraps commands** | `request.command` is byte-identical to what the model asked for — injection is an environment map, so a workspace cannot inject shell syntax |
-| **Asks before allowing** | `direnv_allow` routes through DSH's approval channel; the user sees the path, its SHA-256, and a bounded preview |
+| **Asks before allowing** | `direnv_allow` routes through DSH's approval channel before running `direnv allow` |
 | **Fails closed** | a blocked, denied, or changed `.envrc` injects nothing and says so; no approval service means no approval |
 
 ## Session-start context
@@ -55,12 +55,12 @@ gains a notice the model can act on:
 [dsh-direnv] Workspace: /home/me/proj
 ```
 
-The model then calls `direnv_allow`. The user is shown the path, the file size,
-its SHA-256, and a bounded preview of the contents, and must approve. Only
+The model then calls `direnv_allow`, which requests user approval for the path
+without reading or previewing the file contents. Only
 `allowed-once` proceeds; rejection, cancellation, and an unreachable answerer
 all refuse, and the file is written by the host's own `direnv allow`.
 
-Approval authorizes **exactly the current content**: editing the `.envrc`
+`direnv allow` authorizes the file content at execution time: editing the `.envrc`
 afterwards invalidates it in direnv's own hash, and the next command is blocked
 again until it is re-approved.
 
@@ -117,7 +117,6 @@ or removed. It only reads: it never approves a file and needs no user approval.
     restrictAllowToWorkspace: true  # direnv_allow may only name a file inside the agent's workspace
     followWorkdir: true         # the command's own directory selects the .envrc
     cache: true                 # resolve each directory once; reload on demand
-    previewBytes: 2048          # bounded preview shown in the approval prompt
 ```
 
 | Field | Default | Meaning |
@@ -130,7 +129,6 @@ or removed. It only reads: it never approves a file and needs no user approval.
 | `restrictAllowToWorkspace` | `true` | On, `direnv_allow` refuses any path outside the agent's workspace, including via `..` or a symlink. |
 | `followWorkdir` | `true` | On, a command run in `<ws>/packages/api` picks up *that* `.envrc`. Off, every command uses the session workspace root. |
 | `cache` | `true` | Resolve each directory once and reuse the result. The cache refreshes itself when the `.envrc` changes or when direnv's allow/deny store is rewritten, and `direnv_reload` forces a refresh. Off, every command pays the probe (about 35 ms for an allowed `.envrc`). |
-| `previewBytes` | `2048` | How much of the `.envrc` the user sees. `0` shows only the hash. |
 
 ## Installation
 
@@ -195,7 +193,7 @@ pnpm typecheck   # source AND tests
 pnpm test        # builds, then runs vitest
 ```
 
-The suite (134 tests) runs in layers:
+The suite runs in layers:
 
 - **pure core logic** — RC discovery, diff parsing, filtering, refusals, the
   cache stamp, the session-start context renderer, and the deny-store hash the

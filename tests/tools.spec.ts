@@ -254,7 +254,7 @@ describe("direnv_allow registration", () => {
 });
 
 describe("approval gate", () => {
-	it("asks the user exactly once with the tool identity, call id, and a preview", async () => {
+	it("asks the user exactly once with the tool identity, call id, and path", async () => {
 		const h = await harness();
 		try {
 			const result = await h.call({
@@ -267,8 +267,8 @@ describe("approval gate", () => {
 			expect(request?.callId).toBe("call-1");
 			expect(request?.reason).toContain(h.rcPath);
 			expect(request?.reason).toContain("the build needs the toolchain");
-			expect(request?.reason).toContain("export ALLOW_TOOL_TEST=1");
-			expect(request?.reason).toMatch(/sha256: [0-9a-f]{64}/);
+			expect(request?.reason).not.toContain("export ALLOW_TOOL_TEST=1");
+			expect(request?.reason).not.toContain("sha256:");
 			expect(result.outcome).toBe("approved");
 		} finally {
 			await h.dispose();
@@ -355,10 +355,6 @@ describe("refusals happen before any user is asked", () => {
 				return other;
 			},
 		],
-		[
-			"a path that does not exist",
-			(h) => join(h.workspace, "missing", ".envrc"),
-		],
 	];
 
 	for (const [label, make] of cases) {
@@ -438,7 +434,7 @@ describe("after an approval", () => {
 			expect(result.outcome).toBe("approved");
 			expect(typeof result.variables).toBe("number");
 			expect(result.path).toBe(h.rcPath);
-			expect(String(result.sha256)).toMatch(/^[0-9a-f]{64}$/);
+			expect(result).not.toHaveProperty("sha256");
 		} finally {
 			await h.dispose();
 		}
@@ -500,16 +496,27 @@ describe("after an approval", () => {
 		}
 	});
 
-	it("shows the file hash so the user approves exact content", async () => {
-		const h = await harness();
-		try {
-			const before = await h.call({ path: h.rcPath });
-			const firstHash = String(before.sha256);
-			writeFileSync(h.rcPath, "export ALLOW_TOOL_TEST=2\n");
-			const again = await h.call({ path: h.rcPath });
-			expect(String(again.sha256)).not.toBe(firstHash);
-		} finally {
-			await h.dispose();
-		}
-	});
+	it.each(["missing", "directory"])(
+		"lets direnv report %s targets after user consent without reading contents",
+		async (kind) => {
+			const workspace = scratch();
+			const rcPath = join(workspace, ".envrc");
+			if (kind === "directory") mkdirSync(rcPath);
+			const h = await harness({
+				workspace,
+				rcPath,
+				allowCode: 1,
+				allowStderr: "direnv: error invalid RC",
+			});
+			try {
+				const result = await h.call({ path: rcPath });
+				expect(asked).toHaveLength(1);
+				expect(h.allowSpy).toHaveBeenCalledWith(rcPath);
+				expect(result.outcome).toBe("refused");
+				expect(String(result.detail)).toContain("direnv: error invalid RC");
+			} finally {
+				await h.dispose();
+			}
+		},
+	);
 });

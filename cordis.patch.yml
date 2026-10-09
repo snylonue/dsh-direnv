@@ -19,7 +19,6 @@
         restrictAllowToWorkspace: true
         followWorkdir: true
         cache: true
-        previewBytes: 2048
     - id: direnv-integration
       name: dsh-direnv/integration-plugin
     - id: direnv-tools

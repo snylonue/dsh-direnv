@@ -111,11 +111,6 @@ export default class DirenvService extends Service {
 			.default(defaultConfig.restrictAllowToWorkspace),
 		followWorkdir: z.boolean().default(defaultConfig.followWorkdir),
 		cache: z.boolean().default(defaultConfig.cache),
-		previewBytes: z
-			.natural()
-			.min(0)
-			.max(65_536)
-			.default(defaultConfig.previewBytes),
 	}) as z<DirenvConfig>;
 
 	/**
