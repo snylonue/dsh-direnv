@@ -134,6 +134,12 @@ or removed. It only reads: it never approves a file and needs no user approval.
 
 ## Installation
 
+## From npm
+
+```sh
+dsh plugin --profile web add @snylonue/dsh-direnv
+```
+
 ### From GitHub
 
 
@@ -145,14 +151,6 @@ cat >> ~/.dsh/profiles/web/pnpm-workspace.yaml <<'EOF'
 allowBuilds:
   'dsh-direnv@git+https://github.com/snylonue/dsh-direnv.git': true
 EOF
-```
-
-### From a local path or tarball
-
-```sh
-dsh plugin --profile web add /path/to/dsh-direnv        # link:, requires dist/ to exist
-dsh plugin --profile web add /path/to/dsh-direnv.tgz    # packed, self-contained
-dsh --profile web --dump-config                         # confirm the three rows
 ```
 
 **The plugin only takes effect after a restart.** DSH composes the plugin tree
