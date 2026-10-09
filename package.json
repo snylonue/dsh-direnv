@@ -1,6 +1,6 @@
 {
 	"name": "@snylonue/dsh-direnv",
-	"version": "0.1.1",
+	"version": "0.1.2",
 	"description": "Workspace-aware direnv environment injection for DeepSeek Harness, with user-approved .envrc authorization",
 	"icon": "icon.svg",
 	"type": "module",
