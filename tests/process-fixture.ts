@@ -1,9 +1,5 @@
-import type {
-	ChildProcess,
-	ExecFileOptionsWithStringEncoding,
-	execFile,
-} from "node:child_process";
-import { promisify } from "node:util";
+import type { ChildProcess, spawn } from "node:child_process";
+import { PassThrough } from "node:stream";
 import { vi } from "vitest";
 
 export interface CommandResult {
@@ -13,46 +9,21 @@ export interface CommandResult {
 	stderr: string;
 }
 
-/** Keep execFile's custom promise shape while mocking its callback boundary. */
-export function mockExecFile(actual: typeof execFile) {
-	const mock = vi.fn((...args: Parameters<typeof actual>) => actual(...args));
-	Object.defineProperty(mock, promisify.custom, {
-		value: (
-			file: string,
-			args: readonly string[],
-			options: ExecFileOptionsWithStringEncoding,
-		) => {
-			let child: ChildProcess | undefined;
-			const pending = new Promise<{ stdout: string; stderr: string }>(
-				(resolve, reject) => {
-					child = mock(file, args, options, (error, stdout, stderr) => {
-						if (error) reject(Object.assign(error, { stdout, stderr }));
-						else resolve({ stdout: String(stdout), stderr: String(stderr) });
-					});
-				},
-			);
-			return Object.assign(pending, { child });
-		},
-	});
-	return mock;
+export function mockSpawn(actual: typeof spawn) {
+	return vi.fn((...args: Parameters<typeof actual>) => actual(...args));
 }
 
 export function completeCommand(
 	result: CommandResult,
-	callback: Parameters<typeof execFile>[3],
 	child: ChildProcess,
 ): ChildProcess {
-	if (!callback) throw new Error("missing execFile callback");
+	const stdout = new PassThrough();
+	const stderr = new PassThrough();
+	Object.assign(child, { stdin: null, stdout, stderr });
 	queueMicrotask(() => {
-		const error =
-			result.code === 0
-				? null
-				: Object.assign(new Error("command failed"), {
-						code: result.code,
-						killed: false,
-						...(result.signal === null ? {} : { signal: result.signal }),
-					});
-		callback(error, result.stdout, result.stderr);
+		stdout.end(result.stdout);
+		stderr.end(result.stderr);
+		child.emit("close", result.code, result.signal);
 	});
 	return child;
 }

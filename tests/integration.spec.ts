@@ -32,8 +32,8 @@ import { completeCommand, type CommandResult } from "./process-fixture.js";
 
 vi.mock("node:child_process", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("node:child_process")>();
-	const { mockExecFile } = await import("./process-fixture.js");
-	return { ...actual, execFile: mockExecFile(actual.execFile) };
+	const { mockSpawn } = await import("./process-fixture.js");
+	return { ...actual, spawn: mockSpawn(actual.spawn) };
 });
 afterEach(() => {
 	vi.restoreAllMocks();
@@ -267,13 +267,12 @@ async function boot(
 ): Promise<Booted> {
 	useSandboxEnv(box);
 	if (probe !== undefined) {
-		const { execFile: exec } =
+		const { spawn: exec } =
 			await vi.importActual<typeof ChildProcess>("node:child_process");
-		vi.mocked(ChildProcess.execFile).mockImplementation(
-			(command, args, opts, callback) =>
-				args?.[0] === "export"
-					? completeCommand(probe(), callback, new ChildProcess.ChildProcess())
-					: exec(command, args, opts, callback),
+		vi.mocked(ChildProcess.spawn).mockImplementation((command, args, opts) =>
+			args?.[0] === "export"
+				? completeCommand(probe(), new ChildProcess.ChildProcess())
+				: exec(command, args, opts),
 		);
 	}
 	const ctx = new Context();

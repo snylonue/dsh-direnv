@@ -23,8 +23,8 @@ import { completeCommand } from "./process-fixture.js";
 
 vi.mock("node:child_process", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("node:child_process")>();
-	const { mockExecFile } = await import("./process-fixture.js");
-	return { ...actual, execFile: mockExecFile(actual.execFile) };
+	const { mockSpawn } = await import("./process-fixture.js");
+	return { ...actual, spawn: mockSpawn(actual.spawn) };
 });
 
 const created: string[] = [];
@@ -184,31 +184,27 @@ async function harness(
 		path: rcPath,
 		allowed: 0,
 	});
-	const { execFile: exec } =
+	const { spawn: exec } =
 		await vi.importActual<typeof ChildProcess>("node:child_process");
-	vi.mocked(ChildProcess.execFile).mockImplementation(
-		(command, args, opts, callback) => {
-			if (args?.[0] === "allow")
-				return completeCommand(
-					{ ...allowSpy(String(args[1])), signal: null },
-					callback,
-					new ChildProcess.ChildProcess(),
-				);
-			if (args?.[0] !== "export") return exec(command, args, opts, callback);
-			const dir = String(opts?.cwd);
-			options.probed?.push(dir);
+	vi.mocked(ChildProcess.spawn).mockImplementation((command, args, opts) => {
+		if (args?.[0] === "allow")
 			return completeCommand(
-				{
-					code: 0,
-					signal: null,
-					stdout: options.exportFor?.(dir) ?? "{}",
-					stderr: "",
-				},
-				callback,
+				{ ...allowSpy(String(args[1])), signal: null },
 				new ChildProcess.ChildProcess(),
 			);
-		},
-	);
+		if (args?.[0] !== "export") return exec(command, args, opts);
+		const dir = String(opts?.cwd);
+		options.probed?.push(dir);
+		return completeCommand(
+			{
+				code: 0,
+				signal: null,
+				stdout: options.exportFor?.(dir) ?? "{}",
+				stderr: "",
+			},
+			new ChildProcess.ChildProcess(),
+		);
+	});
 	const providerFiber = await ctx.plugin(
 		class extends DirenvService {
 			constructor(applyCtx: Context) {

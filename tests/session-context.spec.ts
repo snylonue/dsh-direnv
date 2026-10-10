@@ -37,8 +37,8 @@ import {
 
 vi.mock("node:child_process", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("node:child_process")>();
-	const { mockExecFile } = await import("./process-fixture.js");
-	return { ...actual, execFile: mockExecFile(actual.execFile) };
+	const { mockSpawn } = await import("./process-fixture.js");
+	return { ...actual, spawn: mockSpawn(actual.spawn) };
 });
 afterEach(() => {
 	vi.restoreAllMocks();
@@ -184,19 +184,16 @@ async function boot(
 	vi.stubEnv("XDG_CONFIG_HOME", join(root, "config"));
 	vi.stubEnv("XDG_CACHE_HOME", join(root, "cache"));
 	vi.stubEnv("DIRENV_CONFIG", join(root, "config", "direnv"));
-	const { execFile: exec } =
+	const { spawn: exec } =
 		await vi.importActual<typeof ChildProcess>("node:child_process");
-	vi.mocked(ChildProcess.execFile).mockImplementation(
-		(command, args, opts, callback) => {
-			if (args?.[0] !== "export") return exec(command, args, opts, callback);
-			probeCalls += 1;
-			return completeCommand(
-				(options.probe ?? (() => exported({})))(),
-				callback,
-				new ChildProcess.ChildProcess(),
-			);
-		},
-	);
+	vi.mocked(ChildProcess.spawn).mockImplementation((command, args, opts) => {
+		if (args?.[0] !== "export") return exec(command, args, opts);
+		probeCalls += 1;
+		return completeCommand(
+			(options.probe ?? (() => exported({})))(),
+			new ChildProcess.ChildProcess(),
+		);
+	});
 	const config: DirenvConfig = { ...defaultConfig, ...options.config };
 	const fiber = await ctx.plugin(
 		class extends DirenvService {

@@ -21,8 +21,8 @@ import { installDirenvShellAdapter } from "../src/shell-adapter.js";
 
 vi.mock("node:child_process", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("node:child_process")>();
-	const { mockExecFile } = await import("./process-fixture.js");
-	return { ...actual, execFile: mockExecFile(actual.execFile) };
+	const { mockSpawn } = await import("./process-fixture.js");
+	return { ...actual, spawn: mockSpawn(actual.spawn) };
 });
 afterEach(() => {
 	vi.restoreAllMocks();
@@ -89,7 +89,7 @@ async function boot(box: Sandbox, overrides: Partial<DirenvConfig> = {}) {
 		"DIRENV_CONFIG",
 	])
 		vi.stubEnv(name, box.env[name]);
-	const exec = vi.mocked(ChildProcess.execFile);
+	const exec = vi.mocked(ChildProcess.spawn);
 	const ctx = new Context();
 	ctx.provide("shell", {
 		resolve: () => ({}),
