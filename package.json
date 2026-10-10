@@ -1,6 +1,6 @@
 {
 	"name": "@snylonue/dsh-direnv",
-	"version": "0.2.0",
+	"version": "0.2.1",
 	"description": "Workspace-aware direnv environment injection for DeepSeek Harness, with user-approved .envrc authorization",
 	"icon": "icon.svg",
 	"type": "module",
@@ -71,6 +71,7 @@
 		"@deepseek-ai/schemastery": "~3.18.4"
 	},
 	"devDependencies": {
+		"@biomejs/biome": "2",
 		"@deepseek-ai/cordis": "~4.0.4",
 		"@deepseek-ai/dsh-agent": "0.2.0-rc.2",
 		"@deepseek-ai/dsh-bash-local": "0.2.0-rc.2",
@@ -97,7 +98,6 @@
 		"@deepseek-ai/dsh-util-values": "0.2.0-rc.2",
 		"@types/node": "^24.0.0",
 		"typescript": "^5.9.0",
-		"vitest": "^3.2.0",
-		"@biomejs/biome": "2"
+		"vitest": "^3.2.0"
 	}
 }
