@@ -221,7 +221,7 @@ export function apply(ctx: Context): void {
 		defineTool({
 			name: "direnv_reload",
 			description: [
-				"Re-resolve a workspace direnv environment now and report what changed.",
+				"Re-resolve a workspace direnv environment now and report its current set/unset changes.",
 				"Use it after changing something direnv cannot observe, or to confirm what a workspace injects; the normal cache refreshes itself, and omitting directory refreshes every resolved workspace.",
 				"Reads only: it never approves a file.",
 			].join(" "),
@@ -249,11 +249,7 @@ export function apply(ctx: Context): void {
 						? undefined
 						: ctx.direnv.workspaceFor(exec.agent);
 				const requested = args.directory;
-				const target =
-					requested ??
-					(workspace === undefined
-						? undefined
-						: ctx.direnv.probeDirectory(workspace, undefined));
+				const target = requested ?? workspace;
 				if (target === undefined) {
 					return {
 						reloaded: 0,
@@ -275,15 +271,15 @@ export function apply(ctx: Context): void {
 					const where =
 						change.rcPath === undefined ? change.directory : change.rcPath;
 					const delta = [
-						...(change.added === undefined || change.added.length === 0
+						...(change.added.length === 0
 							? []
 							: [`+${change.added.join(",+")}`]),
-						...(change.removed === undefined || change.removed.length === 0
+						...(change.removed.length === 0
 							? []
 							: [`-${change.removed.join(",-")}`]),
 					];
 					const suffix =
-						delta.length === 0 ? "" : ` (changed: ${delta.join(" ")})`;
+						delta.length === 0 ? "" : ` (direnv: ${delta.join(" ")})`;
 					return `  ${where}: ${change.kind}, ${String(change.variables)} variable(s)${suffix}`;
 				});
 				return {

@@ -66,10 +66,10 @@ export interface ReloadChange {
 	kind: DirenvStatus["kind"];
 	/** How many variables will now be injected. */
 	variables: number;
-	/** Names newly injected, when a previous resolution was available to compare. */
-	added?: string[];
-	/** Names no longer injected, when a previous resolution was available. */
-	removed?: string[];
+	/** Names set by the current filtered direnv environment diff. */
+	added: string[];
+	/** Names unset by the current filtered direnv environment diff. */
+	removed: string[];
 }
 
 /** What one `reload` call did. */
@@ -222,7 +222,8 @@ export default class DirenvService extends Service {
 
 	/**
 	 * Re-resolve one directory (or every cached directory) now, bypassing the
-	 * cache, and report what changed. The stamp is recorded so a following
+	 * cache, and report direnv's current set/unset diff, not a cache comparison.
+	 * The stamp is recorded so a following
 	 * command reuses this result rather than probing again.
 	 */
 	async reload(probeDir?: string): Promise<ReloadReport> {
@@ -232,9 +233,6 @@ export default class DirenvService extends Service {
 			probeDir === undefined ? [...this.cache.keys()] : [probeDir];
 		const changed: ReloadChange[] = [];
 		for (const dir of targets) {
-			const before = this.cache.get(dir)?.status;
-			const beforeNames =
-				before === undefined ? undefined : envNames(before.env);
 			this.invalidate(dir);
 			const after = await this.statusFor(dir);
 			const afterNames = envNames(after.env);
@@ -243,12 +241,10 @@ export default class DirenvService extends Service {
 				kind: after.kind,
 				variables: afterNames.length,
 				...(after.rcPath === undefined ? {} : { rcPath: after.rcPath }),
-				...(beforeNames === undefined
-					? {}
-					: {
-							added: afterNames.filter((name) => !beforeNames.includes(name)),
-							removed: beforeNames.filter((name) => !afterNames.includes(name)),
-						}),
+				added: afterNames,
+				removed: Object.keys(after.env)
+					.filter((name) => after.env[name] === undefined)
+					.sort(),
 			});
 		}
 		return { reloaded: targets.length, changed };

@@ -288,6 +288,47 @@ describeReal("per-workspace cache", () => {
 });
 
 describeReal("manual reload", () => {
+	it("reports an inherited variable unset by direnv without an old cache entry", async () => {
+		vi.stubEnv("CACHE_RELOAD_REMOVED", "inherited");
+		const box = sandbox();
+		writeRc(box, "export ADDED=1\nunset CACHE_RELOAD_REMOVED\n");
+		const app = await boot(box);
+		try {
+			const report = await app.service.reload(box.ws);
+			expect(report.changed[0]?.added).toEqual(["ADDED"]);
+			expect(report.changed[0]?.removed).toEqual(["CACHE_RELOAD_REMOVED"]);
+			expect(report.changed[0]?.variables).toBe(1);
+		} finally {
+			await app.dispose();
+		}
+	});
+
+	it("reports names set by direnv without a cached result", async () => {
+		const box = sandbox();
+		writeRc(box, "export B=2\nexport A=1\n");
+		const app = await boot(box);
+		try {
+			const report = await app.service.reload(box.ws);
+			expect(report.changed[0]?.added).toEqual(["A", "B"]);
+			expect(report.changed[0]?.removed).toEqual([]);
+		} finally {
+			await app.dispose();
+		}
+	});
+
+	it("returns empty arrays when direnv produces no environment changes", async () => {
+		const box = sandbox();
+		writeRc(box, "");
+		const app = await boot(box);
+		try {
+			const report = await app.service.reload(box.ws);
+			expect(report.changed[0]?.added).toEqual([]);
+			expect(report.changed[0]?.removed).toEqual([]);
+		} finally {
+			await app.dispose();
+		}
+	});
+
 	it("re-resolves one directory and reports the variable count", async () => {
 		const box = sandbox();
 		writeRc(box, "export A=1\nexport B=2\n");
@@ -299,6 +340,8 @@ describeReal("manual reload", () => {
 			expect(report.reloaded).toBe(1);
 			expect(report.changed).toHaveLength(1);
 			expect(report.changed[0]?.variables).toBe(2);
+			expect(report.changed[0]?.added).toEqual(["A", "B"]);
+			expect(report.changed[0]?.removed).toEqual([]);
 			expect(report.changed[0]?.kind).toBe("injected");
 			expect(app.probes).toBe(before + 1);
 		} finally {
@@ -306,7 +349,7 @@ describeReal("manual reload", () => {
 		}
 	});
 
-	it("reports which names were added and removed since the last resolution", async () => {
+	it("reports the current direnv diff rather than differences from the old cache", async () => {
 		const box = sandbox();
 		const rc = writeRc(box, "export KEEP=1\nexport DROP=2\n");
 		const app = await boot(box);
@@ -315,8 +358,9 @@ describeReal("manual reload", () => {
 			writeFileSync(rc, "export KEEP=1\nexport FRESH=3\n");
 			spawnSync("direnv", ["allow", rc], { env: box.env });
 			const report = await app.service.reload(box.ws);
-			expect(report.changed[0]?.added).toEqual(["FRESH"]);
-			expect(report.changed[0]?.removed).toEqual(["DROP"]);
+			expect(report.changed[0]?.added).toEqual(["FRESH", "KEEP"]);
+			// Removing an old export is not an unset in the current native diff.
+			expect(report.changed[0]?.removed).toEqual([]);
 		} finally {
 			await app.dispose();
 		}

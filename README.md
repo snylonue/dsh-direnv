@@ -102,8 +102,10 @@ direnv_reload directory=/path/to/ws    # re-resolve one directory
 direnv_reload                          # with nothing cached: resolves nothing, says so
 ```
 
-It reports each directory's resulting state and which variable names were added
-or removed. It only reads: it never approves a file and needs no user approval.
+It reports each directory's resulting state and the variable names set or unset
+by the current direnv environment diff, after injection filtering. It does not
+compare against the old cache. It only reads: it never approves a file and needs
+no user approval.
 
 ## Configuration
 

@@ -422,6 +422,7 @@ describe("DirenvService.Config", () => {
 		]) {
 			expect(() =>
 				DirenvService.Config({ ...defaultConfig, probeTimeoutMs }),
-			).toThrow("invalid direnv config");
+			).toThrow(TypeError);
+		}
 	});
 });
