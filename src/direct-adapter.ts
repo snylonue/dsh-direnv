@@ -28,8 +28,6 @@ export function installDirenvDirectAdapter(ctx: Context): { dispose(): void } {
 	};
 
 	const prepare = (explicitEnv: SubprocessSpawnSpec["env"]) => {
-		if (!ctx.direnv.enabled) return explicitEnv;
-
 		const agent = ctx.agents.currentInitiator();
 		if (agent === undefined) return explicitEnv;
 		const workspace = ctx.direnv.workspaceFor(agent);
@@ -37,8 +35,7 @@ export function installDirenvDirectAdapter(ctx: Context): { dispose(): void } {
 
 		// The adapter deliberately scopes direnv to the session workspace root.
 		const { env, status } = ctx.direnv.forWorkspace(workspace);
-		if (status.kind === "no-rc" || status.kind === "disabled")
-			return explicitEnv;
+		if (status.kind === "no-rc") return explicitEnv;
 
 		return { ...env, ...explicitEnv };
 	};

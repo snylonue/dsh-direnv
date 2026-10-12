@@ -48,7 +48,6 @@ export async function injectSessionContext(
 	agent: Agent,
 ): Promise<void> {
 	try {
-		if (!ctx.direnv.enabled) return;
 		const workspace = ctx.direnv.workspaceFor(agent);
 		if (workspace === undefined) return;
 

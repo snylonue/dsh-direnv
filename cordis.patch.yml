@@ -12,7 +12,6 @@
       name: "@snylonue/dsh-direnv"
       config:
         executable: direnv
-        enabled: true
         probeTimeoutMs: 10000
         notifyOnBlocked: false
         sessionContext: true

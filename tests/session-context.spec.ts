@@ -132,15 +132,12 @@ describe("sessionContextText", () => {
 		expect(text).toContain("direnv export timed out");
 	});
 
-	it("stays silent when nothing governs the workspace or the plugin is off", () => {
+	it("stays silent when nothing governs the workspace", () => {
 		expect(
 			sessionContextText(
 				{ kind: "no-rc", rcPath: "/ws/.envrc", env: {}, dropped: [] },
 				"/ws",
 			),
-		).toBeUndefined();
-		expect(
-			sessionContextText({ kind: "disabled", env: {}, dropped: [] }, "/ws"),
 		).toBeUndefined();
 	});
 });
@@ -260,27 +257,20 @@ describe("injectSessionContext", () => {
 		}
 	});
 
-	it("stays silent without an RC, when disabled, or when the context is off", async () => {
+	it("stays silent without an RC or when the context is off", async () => {
 		const noRc = await boot();
 		const off = await boot({
 			rcPath: join(scratch(), ".envrc"),
 			config: { sessionContext: false },
 		});
-		const disabled = await boot({
-			rcPath: join(scratch(), ".envrc"),
-			config: { enabled: false },
-		});
 		try {
 			await injectSessionContext(noRc.ctx, noRc.agent);
 			await injectSessionContext(off.ctx, off.agent);
-			await injectSessionContext(disabled.ctx, disabled.agent);
 			expect(noRc.injected).toHaveLength(0);
 			expect(off.injected).toHaveLength(0);
-			expect(disabled.injected).toHaveLength(0);
 		} finally {
 			await noRc.dispose();
 			await off.dispose();
-			await disabled.dispose();
 		}
 	});
 

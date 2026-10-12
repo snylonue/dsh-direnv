@@ -71,7 +71,6 @@ export default class DirenvService extends Service {
 			.string()
 			.pattern(/^[^\0]+$/)
 			.default(defaultConfig.executable),
-		enabled: z.boolean().default(defaultConfig.enabled),
 		probeTimeoutMs: z
 			.natural()
 			.min(1)
@@ -86,11 +85,6 @@ export default class DirenvService extends Service {
 		private readonly config: DirenvConfig = defaultConfig,
 	) {
 		super(ctx, "direnv");
-	}
-
-	/** Read-only projection of the `enabled` switch, read by the adapters per call. */
-	get enabled(): boolean {
-		return this.config.enabled;
 	}
 
 	/** Read-only projection of the resolved config, for adapters and tools. */
@@ -117,7 +111,6 @@ export default class DirenvService extends Service {
 
 	/** Read the last resolved state without any process or filesystem access. */
 	statusFor(workspace: string): DirenvStatus {
-		if (!this.config.enabled) return { kind: "disabled", env: {}, dropped: [] };
 		return (
 			this.snapshots.get(workspace) ?? {
 				kind: "error",
@@ -135,13 +128,11 @@ export default class DirenvService extends Service {
 		const pending = (async (): Promise<DirenvStatus> => {
 			let status: DirenvStatus;
 			try {
-				status = this.config.enabled
-					? await resolveStatus(
-							workspace,
-							this.config,
-							await readNativeStatus(workspace, this.config),
-						)
-					: { kind: "disabled", env: {}, dropped: [] };
+				status = await resolveStatus(
+					workspace,
+					this.config,
+					await readNativeStatus(workspace, this.config),
+				);
 			} catch (error) {
 				status = {
 					kind: "error",

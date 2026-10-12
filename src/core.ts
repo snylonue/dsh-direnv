@@ -42,8 +42,6 @@ export const SESSION_CONTEXT_MAX_NAMES = 64;
 export interface DirenvConfig {
 	/** The direnv executable: a bare PATH name or an absolute path. */
 	executable: string;
-	/** Whether workspace environment injection is active. */
-	enabled: boolean;
 	/**
 	 * Wall-clock budget for each native status or export run, in milliseconds.
 	 * Exceeding it kills direnv and the command runs without injection.
@@ -67,7 +65,6 @@ export interface DirenvConfig {
 /** The plan's defaults. */
 export const defaultConfig: DirenvConfig = {
 	executable: "direnv",
-	enabled: true,
 	probeTimeoutMs: 10_000,
 	notifyOnBlocked: false,
 	sessionContext: true,
@@ -79,8 +76,7 @@ export type DirenvStatusKind =
 	| "no-rc"
 	| "blocked"
 	| "denied"
-	| "error"
-	| "disabled";
+	| "error";
 
 /** One workspace's resolved direnv state. */
 export interface DirenvStatus {
@@ -317,7 +313,6 @@ export async function resolveStatus(
 	config: DirenvConfig,
 	rc: NativeRc | null,
 ): Promise<DirenvStatus> {
-	if (!config.enabled) return { kind: "disabled", env: {}, dropped: [] };
 	if (rc?.allowed === 1) {
 		return {
 			kind: "blocked",
@@ -391,8 +386,6 @@ export function describeStatus(status: DirenvStatus): string {
 			return `the workspace .envrc is denied${where}`;
 		case "error":
 			return status.detail ?? "direnv could not be consulted";
-		case "disabled":
-			return "direnv injection is disabled";
 	}
 }
 
@@ -441,7 +434,7 @@ export function blockedNotice(
 
 /**
  * The model-facing context injected once when a session starts, or `undefined`
- * when the workspace has nothing to say (`no-rc`, `disabled`).
+ * when the workspace has nothing to say (`no-rc`).
  *
  * The text names the injected variables but never their values: values belong
  * to the workspace and may be secrets, so the message is a snapshot of WHICH
@@ -455,7 +448,6 @@ export function sessionContextText(
 ): string | undefined {
 	const prefix = `[${SESSION_CONTEXT_PLUGIN}]`;
 	switch (status.kind) {
-		case "disabled":
 		case "no-rc":
 			return undefined;
 		case "injected": {

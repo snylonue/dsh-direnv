@@ -27,6 +27,7 @@ import DirenvService, {
 } from "../src/provider.js";
 import { requireRealProcesses } from "./helpers.js";
 import { installDirenvShellAdapter } from "../src/shell-adapter.js";
+import * as IntegrationPlugin from "../src/integration-plugin.js";
 import { readNativeStatus } from "../src/core.js";
 import { completeCommand, type CommandResult } from "./process-fixture.js";
 
@@ -602,15 +603,29 @@ describeReal("direnv injection (real direnv)", () => {
 		}
 	});
 
-	it("does not inject when disabled", async () => {
+	it("unloads the adapter when Cordis removes the direnv provider", async () => {
 		const box = sandbox();
 		writeRc(box, ".", "export X=1\n");
-		const app = await boot(box, { enabled: false });
+		useSandboxEnv(box);
+		const ctx = new Context();
+		provideShell(ctx, new RecordingShell());
+		const agents = await ctx.plugin(FakeAgents);
+		const provider = await ctx.plugin(DirenvService, { ...defaultConfig });
+		await ctx.direnv.reload(box.workspace);
+		currentAgent = { session: { header: { cwd: box.workspace } } };
+		const integration = await ctx.plugin(IntegrationPlugin, {});
+		const shell = ctx.shell as unknown as RecordingShell;
 		try {
-			await app.shell.run(app.shell.resolve({ command: "true" }));
-			expect(app.shell.last().env).toBeUndefined();
+			await shell.run(shell.resolve({ command: "true" }));
+			expect(shell.last().env?.X).toBe("1");
+			await provider.dispose();
+			expect(ctx.get("direnv")).toBeUndefined();
+			await shell.run(shell.resolve({ command: "true" }));
+			expect(shell.last().env).toBeUndefined();
 		} finally {
-			await app.dispose();
+			await integration.dispose();
+			await provider.dispose();
+			await agents.dispose();
 		}
 	});
 

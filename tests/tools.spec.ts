@@ -422,7 +422,7 @@ describe("native approval without plugin validation", () => {
 
 describe("after an approval", () => {
 	it("reports the number of variables the next command will receive", async () => {
-		const h = await harness({ config: { enabled: true } });
+		const h = await harness();
 		try {
 			// The injected probe returns an empty diff, so the count is zero; the
 			// contract under test is that the count is reported, not its value.
@@ -448,7 +448,6 @@ describe("after an approval", () => {
 
 		const probed: string[] = [];
 		const h = await harness({
-			config: { enabled: true },
 			workspace,
 			probed,
 			// Only the nested directory has an environment; the workspace root does not.

@@ -144,8 +144,8 @@ function withNotice(execution: ShellExecution, notice: string): ShellExecution {
 /**
  * Install the adapter on the concrete `ctx.shell` provider target.
  *
- * Per call the adapter reads `ctx.direnv.enabled`, requires a current
- * initiating agent, resolves that agent's workspace from its session cwd, and
+ * Per call the adapter requires a current initiating agent, resolves that
+ * agent's workspace from its session cwd, and
  * injects only when a `.envrc` actually governs the directory. Agentless
  * calls and workspaces with no `.envrc` pass through by reference, so the
  * adapter is completely inert outside an agent turn.
@@ -167,8 +167,6 @@ export function installDirenvShellAdapter(
 		ctx.shell,
 		"execute",
 		async (next, _thisArg, [spec]) => {
-			if (!ctx.direnv.enabled) return next();
-
 			// currentInitiator() throws once the agents service is disposed; Cordis
 			// unload ordering surfaces that error rather than degrading into an
 			// un-injected run, which would quietly execute without the workspace env.
@@ -178,7 +176,7 @@ export function installDirenvShellAdapter(
 			if (workspace === undefined) return next();
 
 			const { env, status, notice } = ctx.direnv.forWorkspace(workspace);
-			if (status.kind === "no-rc" || status.kind === "disabled") return next();
+			if (status.kind === "no-rc") return next();
 
 			// `undefined` values are the seam's removal convention and must survive the
 			// merge, so the map is built loosely and narrowed only at the seam boundary

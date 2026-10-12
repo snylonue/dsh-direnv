@@ -70,7 +70,6 @@ direnv_reload                          # reload the calling session workspace
   name: dsh-direnv
   config:
     executable: direnv          # bare PATH name or absolute path
-    enabled: true               # master switch
     probeTimeoutMs: 10000       # budget for one direnv run
     notifyOnBlocked: false      # opt in to append actionable notices to results
     sessionContext: true        # inject the workspace's direnv variables at session start
@@ -79,10 +78,12 @@ direnv_reload                          # reload the calling session workspace
 | Field | Default | Meaning |
 |---|---|---|
 | `executable` | `direnv` | The direnv binary; must be on `PATH` or absolute. |
-| `enabled` | `true` | When off, the adapter is inert and no probe runs. |
 | `probeTimeoutMs` | `10000` | Each `direnv status --json` or `direnv export json` run is killed past this. |
 | `notifyOnBlocked` | `false` | Opt in to append actionable notices; off leaves command results unchanged. |
 | `sessionContext` | `true` | On, starting a session injects the workspace's direnv variables (or why none loaded). |
+
+Disable the provider with Cordis's `disabled: true` on its plugin row, outside
+`config`. Its dependent adapters and tools become inactive automatically.
 
 ## Installation
 

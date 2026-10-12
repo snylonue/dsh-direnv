@@ -239,17 +239,23 @@ describe("hasAppliedEntries", () => {
 
 describe("DirenvService activation", () => {
 	it("loads and resolves a workspace without any execution service", async () => {
+		const workspace = scratch();
+		writeFileSync(
+			join(workspace, "status"),
+			"process.stdout.write(JSON.stringify({state:{foundRC:null}}));",
+		);
+		writeFileSync(join(workspace, "export"), 'process.stdout.write("{}");');
 		const ctx = new Context();
 		const fiber = await ctx.plugin(DirenvService, {
 			...defaultConfig,
-			enabled: false,
+			executable: process.execPath,
 		});
 		try {
 			expect(ctx.get("shell")).toBeUndefined();
 			expect(ctx.get("subprocess")).toBeUndefined();
 			expect(ctx.get("direnv")).toBeInstanceOf(DirenvService);
-			await expect(ctx.direnv.reload(scratch())).resolves.toMatchObject({
-				kind: "disabled",
+			await expect(ctx.direnv.reload(workspace)).resolves.toMatchObject({
+				kind: "no-rc",
 				variables: 0,
 				added: [],
 				removed: [],

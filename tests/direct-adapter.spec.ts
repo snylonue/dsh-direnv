@@ -22,7 +22,6 @@ describe("direct subprocess direnv adapter", () => {
 			subprocess,
 			agents: { currentInitiator: () => ({ id: "agent" }) },
 			direnv: {
-				enabled: true,
 				workspaceFor: () => "/workspace",
 				forWorkspace: () => ({ env: {}, status: { kind: "injected" } }),
 			},
@@ -63,7 +62,6 @@ describe("direct subprocess direnv adapter", () => {
 			subprocess,
 			agents: { currentInitiator: () => ({ id: "agent" }) },
 			direnv: {
-				enabled: true,
 				workspaceFor: () => "/workspace",
 				forWorkspace,
 			},
@@ -124,7 +122,6 @@ describe("direct subprocess direnv adapter", () => {
 			subprocess,
 			agents: { currentInitiator: () => ({ id: "agent" }) },
 			direnv: {
-				enabled: true,
 				workspaceFor: () => "/workspace",
 				forWorkspace: () => ({
 					env: { IGNORED: "yes" },
