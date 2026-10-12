@@ -572,33 +572,29 @@ export function sessionContextText(
 				shown.length === 0
 					? "(no variables; this .envrc only unsets names)"
 					: `${shown.join(", ")}${hidden > 0 ? `, and ${String(hidden)} more` : ""}`;
-			return [
-				`${prefix} ${status.rcPath ?? "The governing .envrc"} injects ${String(names.length)} variable(s) into every command the agent runs:`,
-				`${prefix}   ${list}`,
-			].join("\n");
+			return `${prefix} ${status.rcPath ?? "The governing .envrc"} injects ${String(names.length)} variable(s) into every command the agent runs: ${list}.`;
 		}
 		case "blocked": {
 			const target = status.rcPath ?? "the workspace .envrc";
 			return [
 				`${prefix} The workspace direnv environment is NOT loaded: ${target} is not approved.`,
-				`${prefix} Call the direnv_allow tool with this path to ask the user to approve it:`,
-				`${prefix}   direnv_allow path=${target}`,
-				`${prefix} Workspace: ${workspace}`,
+				`Call the direnv_allow tool with this path to ask the user to approve it: direnv_allow path=${target}.`,
+				`Workspace: ${workspace}.`,
 			].join("\n");
 		}
 		case "denied": {
 			const target = status.rcPath ?? "the workspace .envrc";
 			return [
 				`${prefix} The workspace direnv environment is NOT loaded: ${target} is denied.`,
-				`${prefix} Ask the user to check it with: direnv status`,
-				`${prefix} Workspace: ${workspace}`,
+				`Ask the user to check it with: direnv status.`,
+				`Workspace: ${workspace}.`,
 			].join("\n");
 		}
 		case "error":
 			return [
 				`${prefix} The workspace direnv environment is NOT loaded.`,
-				`${prefix} ${status.detail ?? "direnv could not be consulted."}`,
-				`${prefix} Workspace: ${workspace}`,
+				`${status.detail ?? "direnv could not be consulted."}`,
+				`Workspace: ${workspace}.`,
 			].join("\n");
 	}
 }
