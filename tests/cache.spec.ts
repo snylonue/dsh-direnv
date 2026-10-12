@@ -296,9 +296,9 @@ describeReal("manual reload", () => {
 		const app = await boot(box);
 		try {
 			const report = await app.service.reload(box.ws);
-			expect(report.changed[0]?.added).toEqual(["ADDED"]);
-			expect(report.changed[0]?.removed).toEqual(["CACHE_RELOAD_REMOVED"]);
-			expect(report.changed[0]?.variables).toBe(1);
+			expect(report.added).toEqual(["ADDED"]);
+			expect(report.removed).toEqual(["CACHE_RELOAD_REMOVED"]);
+			expect(report.variables).toBe(1);
 		} finally {
 			await app.dispose();
 		}
@@ -310,8 +310,8 @@ describeReal("manual reload", () => {
 		const app = await boot(box);
 		try {
 			const report = await app.service.reload(box.ws);
-			expect(report.changed[0]?.added).toEqual(["A", "B"]);
-			expect(report.changed[0]?.removed).toEqual([]);
+			expect(report.added).toEqual(["A", "B"]);
+			expect(report.removed).toEqual([]);
 		} finally {
 			await app.dispose();
 		}
@@ -323,8 +323,8 @@ describeReal("manual reload", () => {
 		const app = await boot(box);
 		try {
 			const report = await app.service.reload(box.ws);
-			expect(report.changed[0]?.added).toEqual([]);
-			expect(report.changed[0]?.removed).toEqual([]);
+			expect(report.added).toEqual([]);
+			expect(report.removed).toEqual([]);
 		} finally {
 			await app.dispose();
 		}
@@ -338,12 +338,11 @@ describeReal("manual reload", () => {
 			await app.service.reload(box.ws);
 			const before = app.probes;
 			const report = await app.service.reload(box.ws);
-			expect(report.reloaded).toBe(1);
-			expect(report.changed).toHaveLength(1);
-			expect(report.changed[0]?.variables).toBe(2);
-			expect(report.changed[0]?.added).toEqual(["A", "B"]);
-			expect(report.changed[0]?.removed).toEqual([]);
-			expect(report.changed[0]?.kind).toBe("injected");
+			expect(report.directory).toBe(box.ws);
+			expect(report.variables).toBe(2);
+			expect(report.added).toEqual(["A", "B"]);
+			expect(report.removed).toEqual([]);
+			expect(report.kind).toBe("injected");
 			expect(app.probes).toBe(before + 1);
 		} finally {
 			await app.dispose();
@@ -359,15 +358,15 @@ describeReal("manual reload", () => {
 			writeFileSync(rc, "export KEEP=1\nexport FRESH=3\n");
 			spawnSync("direnv", ["allow", rc], { env: box.env });
 			const report = await app.service.reload(box.ws);
-			expect(report.changed[0]?.added).toEqual(["FRESH", "KEEP"]);
+			expect(report.added).toEqual(["FRESH", "KEEP"]);
 			// Removing an old export is not an unset in the current native diff.
-			expect(report.changed[0]?.removed).toEqual([]);
+			expect(report.removed).toEqual([]);
 		} finally {
 			await app.dispose();
 		}
 	});
 
-	it("reloads every cached directory when given none", async () => {
+	it("reloads only the requested workspace, leaving other snapshots unchanged", async () => {
 		const box = sandbox();
 		writeRc(box, "export ROOT=1\n");
 		const sub = join(box.ws, "pkg");
@@ -379,22 +378,25 @@ describeReal("manual reload", () => {
 		try {
 			await app.service.reload(box.ws);
 			await app.service.reload(sub);
-			const report = await app.service.reload();
-			expect(report.reloaded).toBe(2);
-			expect(report.changed.map((c) => c.directory).sort()).toEqual(
-				[box.ws, sub].sort(),
-			);
+			const previous = app.service.statusFor(sub);
+			const before = app.probes;
+			const report = await app.service.reload(box.ws);
+			expect(report.directory).toBe(box.ws);
+			expect(app.probes).toBe(before + 1);
+			expect(app.service.statusFor(sub)).toBe(previous);
 		} finally {
 			await app.dispose();
 		}
 	});
 
-	it("reports zero when nothing was cached", async () => {
+	it("resolves an explicitly requested workspace even without a saved snapshot", async () => {
 		const box = sandbox();
 		writeRc(box, "export V=1\n");
 		const app = await boot(box);
 		try {
-			expect((await app.service.reload()).reloaded).toBe(0);
+			const report = await app.service.reload(box.ws);
+			expect(report.directory).toBe(box.ws);
+			expect(report.added).toEqual(["V"]);
 		} finally {
 			await app.dispose();
 		}
@@ -408,7 +410,7 @@ describeReal("manual reload", () => {
 			await app.service.reload(box.ws);
 			// Explicit reload always resolves again, even when files are unchanged.
 			const report = await app.service.reload(box.ws);
-			expect(report.changed[0]?.kind).toBe("injected");
+			expect(report.kind).toBe("injected");
 		} finally {
 			await app.dispose();
 		}

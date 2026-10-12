@@ -69,6 +69,13 @@ interface CapturedTool {
 	name: string;
 	description: string;
 	parameters: unknown;
+	output: {
+		schema: unknown;
+		render: (
+			args: Record<string, unknown>,
+			value: Record<string, unknown>,
+		) => Array<{ type: string; text: string }>;
+	};
 	/** The tool body, invoked by the harness with a fabricated caller. */
 	execute: (
 		args: Record<string, unknown>,
@@ -508,6 +515,58 @@ describe("after an approval", () => {
 });
 
 describe("workspace-only reload", () => {
+	it("returns structured set/unset details and renders the text summary separately", async () => {
+		const h = await harness({
+			exportFor: () =>
+				'{"ADDED":"secret-value","REMOVED":null,"DSH_SECRET":"managed-value"}',
+		});
+		try {
+			const tool = capturedTool("direnv_reload");
+			const result = await tool?.execute(
+				{},
+				{
+					agent: { session: { header: { cwd: h.workspace } } },
+				},
+			);
+			expect(result).toEqual({
+				reloaded: 1,
+				detail: {
+					directory: h.workspace,
+					rcPath: h.rcPath,
+					kind: "injected",
+					variables: 1,
+					added: ["ADDED"],
+					removed: ["REMOVED"],
+				},
+			});
+			expect(tool?.output.schema).toMatchObject({
+				oneOf: [
+					{
+						properties: {
+							reloaded: { type: "integer" },
+							detail: { type: "object" },
+						},
+						required: ["reloaded", "detail"],
+					},
+					{ properties: { error: { type: "string" } }, required: ["error"] },
+				],
+			});
+			expect(tool?.output.render({}, result ?? {})).toEqual([
+				{
+					type: "text",
+					text:
+						"dsh-direnv: reloaded 1 workspace(s).\n  " +
+						h.rcPath +
+						": injected, 1 variable(s) (direnv: +ADDED -REMOVED)",
+				},
+			]);
+			expect(JSON.stringify(result)).not.toContain("secret-value");
+			expect(JSON.stringify(result)).not.toContain("managed-value");
+		} finally {
+			await h.dispose();
+		}
+	});
+
 	it("reloads only the calling workspace even when others have snapshots", async () => {
 		const h = await harness();
 		try {
@@ -530,9 +589,18 @@ describe("workspace-only reload", () => {
 		const h = await harness();
 		try {
 			const reload = vi.spyOn(h.ctx.direnv, "reload");
-			const result = await capturedTool("direnv_reload")?.execute({}, {});
-			expect(result?.reloaded).toBe(0);
+			const tool = capturedTool("direnv_reload");
+			const result = await tool?.execute({}, {});
+			expect(result).toEqual({
+				error: "dsh-direnv: this call has no workspace to reload.",
+			});
 			expect(reload).not.toHaveBeenCalled();
+			expect(tool?.output.render({}, result ?? {})).toEqual([
+				{
+					type: "text",
+					text: "dsh-direnv: this call has no workspace to reload.",
+				},
+			]);
 		} finally {
 			await h.dispose();
 		}

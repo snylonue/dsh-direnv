@@ -93,11 +93,16 @@ direnv_reload                          # reload the calling session workspace
 ```
 
 Changing a command's working directory never changes its direnv environment.
-The service's argument-less `reload()` refreshes all previously resolved workspaces;
-the tool has no parameters and refreshes only the calling session workspace.
+The service requires `reload(workspace)` and returns that workspace's result
+directly. The tool has no parameters and refreshes only the calling session workspace.
 
-Reload reports names set/unset by the current filtered native direnv diff, not
-changes relative to the saved snapshot. Values are never included. Reload does
+Reload returns `reloaded` and a single structured `detail` object containing
+`directory`, optional `rcPath`, `kind`, `variables`, `added`, and `removed`.
+These lists report names set/unset by the current filtered native direnv diff,
+not changes relative to the saved snapshot. Values are never included. A missing
+session workspace returns only `{ error }`. The output schema uses a top-level
+`oneOf` to distinguish success from error, without nullable or optional results.
+The text summary is generated separately for display. Reload does
 not approve files. The previous snapshot remains readable while reload runs and
 is replaced when resolution completes; subsequent commands use the new result.
 

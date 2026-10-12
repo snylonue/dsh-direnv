@@ -49,8 +49,8 @@ export type {
 } from "./core.js";
 export { defaultConfig, envNames } from "./core.js";
 
-/** One directory's outcome after a reload. */
-export interface ReloadChange {
+/** One workspace's outcome after a reload. */
+export interface ReloadReport {
 	/** The directory whose environment was re-resolved. */
 	directory: string;
 	/** The governing RC file, when one was found. */
@@ -63,14 +63,6 @@ export interface ReloadChange {
 	added: string[];
 	/** Names unset by the current filtered direnv environment diff. */
 	removed: string[];
-}
-
-/** What one `reload` call did. */
-export interface ReloadReport {
-	/** How many directories were re-resolved. */
-	reloaded: number;
-	/** One entry per re-resolved directory. */
-	changed: ReloadChange[];
 }
 
 export default class DirenvService extends Service {
@@ -177,29 +169,23 @@ export default class DirenvService extends Service {
 	}
 
 	/**
-	 * Resolve one workspace (or all previously resolved workspaces) explicitly.
+	 * Resolve one workspace explicitly.
 	 * Session startup also calls this; command execution never does.
 	 * Report the current filtered direnv set/unset diff, not a cache comparison.
 	 */
-	async reload(workspace?: string): Promise<ReloadReport> {
-		const targets =
-			workspace === undefined ? [...this.snapshots.keys()] : [workspace];
-		const changed: ReloadChange[] = [];
-		for (const dir of targets) {
-			const after = await this.resolveWorkspace(dir);
-			const names = envNames(after.env);
-			changed.push({
-				directory: dir,
-				kind: after.kind,
-				variables: names.length,
-				...(after.rcPath === undefined ? {} : { rcPath: after.rcPath }),
-				added: names,
-				removed: Object.keys(after.env)
-					.filter((name) => after.env[name] === undefined)
-					.sort(),
-			});
-		}
-		return { reloaded: targets.length, changed };
+	async reload(workspace: string): Promise<ReloadReport> {
+		const after = await this.resolveWorkspace(workspace);
+		const names = envNames(after.env);
+		return {
+			directory: workspace,
+			kind: after.kind,
+			variables: names.length,
+			...(after.rcPath === undefined ? {} : { rcPath: after.rcPath }),
+			added: names,
+			removed: Object.keys(after.env)
+				.filter((name) => after.env[name] === undefined)
+				.sort(),
+		};
 	}
 
 	/** The stored environment patch and optional command notice. No probing. */

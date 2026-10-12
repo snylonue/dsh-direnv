@@ -192,30 +192,46 @@ export function apply(ctx: Context): void {
 			parameters: {},
 			output: {
 				schema: {
-					type: "object",
-					additionalProperties: false,
-					properties: {
-						reloaded: { type: "integer", required: true },
-						detail: { type: "string", required: true },
-					},
+					oneOf: [
+						{
+							type: "object",
+							additionalProperties: false,
+							properties: {
+								reloaded: { type: "integer", required: true },
+								detail: {
+									required: true,
+									type: "object",
+									additionalProperties: false,
+									properties: {
+										directory: { type: "string", required: true },
+										rcPath: { type: "string" },
+										kind: { type: "string", required: true },
+										variables: { type: "integer", required: true },
+										added: {
+											type: "array",
+											required: true,
+											items: { type: "string" },
+										},
+										removed: {
+											type: "array",
+											required: true,
+											items: { type: "string" },
+										},
+									},
+								},
+							},
+						},
+						{
+							type: "object",
+							additionalProperties: false,
+							properties: { error: { type: "string", required: true } },
+						},
+					],
 				},
-				render: (_args, value) => [{ type: "text", text: value.detail }],
-			},
-			async execute(_args, exec) {
-				const workspace =
-					exec.agent === undefined
-						? undefined
-						: ctx.direnv.workspaceFor(exec.agent);
-				if (workspace === undefined) {
-					return {
-						reloaded: 0,
-						detail: "dsh-direnv: this call has no workspace to reload.",
-					};
-				}
-				const report = await ctx.direnv.reload(workspace);
-				const lines = report.changed.map((change) => {
-					const where =
-						change.rcPath === undefined ? change.directory : change.rcPath;
+				render: (_args, value) => {
+					if ("error" in value) return [{ type: "text", text: value.error }];
+					const change = value.detail;
+					const where = change.rcPath ?? change.directory;
 					const delta = [
 						...(change.added.length === 0
 							? []
@@ -226,15 +242,29 @@ export function apply(ctx: Context): void {
 					];
 					const suffix =
 						delta.length === 0 ? "" : ` (direnv: ${delta.join(" ")})`;
-					return `  ${where}: ${change.kind}, ${String(change.variables)} variable(s)${suffix}`;
-				});
-				return {
-					reloaded: report.reloaded,
-					detail: [
-						`dsh-direnv: reloaded ${String(report.reloaded)} workspace(s).`,
-						...lines,
-					].join("\n"),
-				};
+					return [
+						{
+							type: "text",
+							text: [
+								`dsh-direnv: reloaded ${String(value.reloaded)} workspace(s).`,
+								`  ${where}: ${change.kind}, ${String(change.variables)} variable(s)${suffix}`,
+							].join("\n"),
+						},
+					];
+				},
+			},
+			async execute(_args, exec) {
+				const workspace =
+					exec.agent === undefined
+						? undefined
+						: ctx.direnv.workspaceFor(exec.agent);
+				if (workspace === undefined) {
+					return {
+						error: "dsh-direnv: this call has no workspace to reload.",
+					};
+				}
+				const detail = await ctx.direnv.reload(workspace);
+				return { reloaded: 1, detail };
 			},
 			presentCall: () => ({
 				card: "generic",
