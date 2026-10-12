@@ -1,10 +1,9 @@
 /**
- * Cordis plugin wiring the direnv shell adapter into the Host composition.
+ * Cordis plugin wiring direnv adapters and session context into the Host.
  *
- * Declares the agent registry, shell provider, and direnv provider as required
- * services. `apply` installs the shell adapter inside one effect; fiber unload
- * removes it. A provider that failed activation means this row never activates,
- * so a broken direnv setup can never leave a half-instrumented shell.
+ * The agent registry and direnv provider are required by the whole plugin.
+ * Each adapter waits for its execution service through `ctx.inject()`; effects
+ * remove the installed adapters and listeners when their owning fiber unloads.
  *
  * @module dsh-direnv/integration-plugin
  */
@@ -16,8 +15,7 @@ import { installDirenvDirectAdapter } from "./direct-adapter.js";
 
 export const name = "direnv-integration";
 
-/** Activate once the Host services the adapter reads per call exist. */
-export const inject = ["agents", "shell", "direnv"];
+export const inject = ["agents", "direnv"];
 
 /** No integration-local settings; behavior belongs to the provider row. */
 export type Config = Record<string, never>;
@@ -25,28 +23,22 @@ export type Config = Record<string, never>;
 export const Config = z.object({}) as z<Config>;
 
 export function apply(ctx: Context, _config: Config): void {
-	ctx.inject(["subprocess"], (subprocessCtx: Context) => {
-		const adapter = installDirenvDirectAdapter(subprocessCtx);
-		subprocessCtx.effect(() => () => adapter.dispose());
+	ctx.inject(["subprocess"], (ctx: Context) => {
+		ctx.effect(() => {
+			const adapter = installDirenvDirectAdapter(ctx);
+			return () => adapter.dispose();
+		});
+	});
+
+	ctx.inject(["shell"], (ctx: Context) => {
+		ctx.effect(() => {
+			const adapter = installDirenvShellAdapter(ctx);
+			return () => adapter.dispose();
+		});
 	});
 
 	ctx.effect(() => {
-		const adapter = installDirenvShellAdapter(ctx);
-		let sessionContext: ReturnType<typeof installDirenvSessionContext>;
-		try {
-			sessionContext = installDirenvSessionContext(ctx);
-		} catch (error) {
-			// The effect's disposer is never registered when its setup throws, so a
-			// failure here would strand `adapter` on the shell provider after this
-			// fiber goes inactive — every later shell call would then fault on the
-			// dead `ctx.direnv` it reads per call.
-			adapter.dispose();
-			throw error;
-		}
-		return () => {
-			// Reverse install order, though both are independent.
-			sessionContext.dispose();
-			adapter.dispose();
-		};
+		const sessionContext = installDirenvSessionContext(ctx);
+		return () => sessionContext.dispose();
 	});
 }
