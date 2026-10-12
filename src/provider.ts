@@ -1,6 +1,6 @@
 /**
  * `direnv` service provider: resolves one workspace's native direnv
- * environment for the shell adapter and owns the approval bookkeeping the
+ * environment for the execution adapters and owns the approval bookkeeping the
  * `direnv_allow` tool consults.
  *
  * The provider owns strict config validation, a bounded `direnv export json`
@@ -37,7 +37,7 @@ import {
 
 declare module "@deepseek-ai/cordis" {
 	interface Context {
-		/** Native direnv environment projections for agent-owned shell calls. */
+		/** Native direnv environment projections for agent-owned commands. */
 		direnv: DirenvService;
 	}
 }
@@ -80,13 +80,6 @@ export default class DirenvService extends Service {
 		notifyOnBlocked: z.boolean().default(defaultConfig.notifyOnBlocked),
 		sessionContext: z.boolean().default(defaultConfig.sessionContext),
 	}) as z<DirenvConfig>;
-
-	/**
-	 * The shell service is required because the value of this plugin is exactly
-	 * the environment its calls receive; without a shell there is nothing to
-	 * inject into, so activation fails loudly instead of loading inert.
-	 */
-	static inject = ["shell"];
 
 	constructor(
 		ctx: Context,

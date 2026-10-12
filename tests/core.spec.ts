@@ -6,6 +6,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { Context } from "@deepseek-ai/cordis";
 import {
 	isAbsolutePath,
 	assertAbsolutePath,
@@ -233,6 +234,29 @@ describe("hasAppliedEntries", () => {
 		).toBe(false);
 		expect(hasAppliedEntries({ DIRENV_DIFF: "x", REAL: "1" })).toBe(true);
 		expect(hasAppliedEntries({})).toBe(false);
+	});
+});
+
+describe("DirenvService activation", () => {
+	it("loads and resolves a workspace without any execution service", async () => {
+		const ctx = new Context();
+		const fiber = await ctx.plugin(DirenvService, {
+			...defaultConfig,
+			enabled: false,
+		});
+		try {
+			expect(ctx.get("shell")).toBeUndefined();
+			expect(ctx.get("subprocess")).toBeUndefined();
+			expect(ctx.get("direnv")).toBeInstanceOf(DirenvService);
+			await expect(ctx.direnv.reload(scratch())).resolves.toMatchObject({
+				kind: "disabled",
+				variables: 0,
+				added: [],
+				removed: [],
+			});
+		} finally {
+			await fiber.dispose();
+		}
 	});
 });
 
