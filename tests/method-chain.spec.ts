@@ -5,7 +5,7 @@
  * @module tests/method-chain
  */
 import { Context, Service, symbols } from "@deepseek-ai/cordis";
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 import { installChainLink } from "../src/method-chain.js";
 
 class Greeter {
@@ -147,10 +147,76 @@ describe("installChainLink", () => {
 		link.dispose();
 	});
 
+	it("infers method arguments, receivers, and return types", () => {
+		const target = new Greeter();
+		const link = installChainLink(target, "greet", (next, receiver, [name]) => {
+			expectTypeOf(name).toEqualTypeOf<string>();
+			expectTypeOf(receiver).toEqualTypeOf<Greeter>();
+			expectTypeOf(next()).toEqualTypeOf<string>();
+			if (false) {
+				// @ts-expect-error forwarding must respect the method argument type
+				next(123);
+			}
+			return next(name);
+		});
+		expect(target.greet("typed")).toBe("base(typed)");
+		link.dispose();
+		if (false) {
+			// @ts-expect-error a synchronous method cannot acquire an async wrapper
+			installChainLink(target, "greet", async (next) => next());
+			// @ts-expect-error wrappers must preserve the method return type
+			installChainLink(target, "greet", () => 123);
+			// @ts-expect-error non-function properties cannot be wrapped
+			installChainLink({ value: 42 }, "value", () => 42);
+		}
+	});
+
+	it("keeps replaced arguments when an inner link calls next()", () => {
+		const target = new Greeter();
+		const seen: string[] = [];
+		const inner = installChainLink(
+			target,
+			"greet",
+			(next, _receiver, [name]) => {
+				seen.push(name);
+				return next();
+			},
+		);
+		const outer = installChainLink(target, "greet", (next) => next("replaced"));
+		expect(target.greet("original")).toBe("base(replaced)");
+		expect(seen).toEqual(["replaced"]);
+		inner.dispose();
+		outer.dispose();
+	});
+
+	it("preserves typed async composition after awaiting preparation", async () => {
+		const target = {
+			async lookup(name: string): Promise<string> {
+				return `base(${name})`;
+			},
+		};
+		const inner = installChainLink(
+			target,
+			"lookup",
+			async (next, _receiver, [name]) => {
+				expectTypeOf(name).toEqualTypeOf<string>();
+				expectTypeOf(next).returns.toEqualTypeOf<Promise<string>>();
+				return `inner(${await next()})`;
+			},
+		);
+		const outer = installChainLink(target, "lookup", async (next) => {
+			await Promise.resolve();
+			return next("replaced");
+		});
+		expect(await target.lookup("original")).toBe("inner(base(replaced))");
+		inner.dispose();
+		outer.dispose();
+	});
+
 	it("rejects a missing or non-function method", () => {
 		const target = new Greeter();
 		expect(() =>
-			installChainLink(target, "absent" as "greet", () => 1),
+			installChainLink(target, "absent" as "greet", () => "unused"),
 		).toThrow(TypeError);
 		const holder = { value: 42 };
 		expect(() => installChainLink(holder, "value" as never, () => 1)).toThrow(

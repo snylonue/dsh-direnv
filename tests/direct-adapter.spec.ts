@@ -1,12 +1,23 @@
 import { describe, expect, it, vi } from "vitest";
 import { installDirenvDirectAdapter } from "../src/direct-adapter.js";
 
+function unusedSubprocessMethods() {
+	return {
+		spawn: vi.fn(() => {
+			throw new Error("unexpected spawn");
+		}),
+		spawnTerminal: vi.fn(async () => {
+			throw new Error("unexpected terminal spawn");
+		}),
+	};
+}
+
 describe("direct subprocess direnv adapter", () => {
 	it("normalizes an empty direnv diff without explicit overrides to an empty map", async () => {
 		const resolveExecutable = vi.fn(
 			async (_command: string) => "/workspace/bin/tool",
 		);
-		const subprocess = { resolveExecutable };
+		const subprocess = { ...unusedSubprocessMethods(), resolveExecutable };
 		const context = {
 			subprocess,
 			agents: { currentInitiator: () => ({ id: "agent" }) },
@@ -110,7 +121,7 @@ describe("direct subprocess direnv adapter", () => {
 		const resolveExecutable = vi.fn(
 			async (_command: string, env?: Readonly<Record<string, string>>) => env,
 		);
-		const subprocess = { resolveExecutable };
+		const subprocess = { ...unusedSubprocessMethods(), resolveExecutable };
 		const context = {
 			subprocess,
 			agents: { currentInitiator: () => ({ id: "agent" }) },

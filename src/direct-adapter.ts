@@ -12,8 +12,8 @@ import type {
 	SubprocessHandle,
 	SubprocessOutputReader,
 	SubprocessSpawnSpec,
-	SubprocessRuntime,
 } from "@deepseek-ai/dsh-subprocess";
+import { installChainLink, type ChainHandle } from "./method-chain.js";
 
 function emptyRead(fromByte: number) {
 	return { text: "", nextOffset: fromByte, lossy: false };
@@ -135,24 +135,13 @@ function stringEnv(env: SubprocessSpawnSpec["env"]): Record<string, string> {
 	);
 }
 
-function restoreMethod<
-	K extends "resolveExecutable" | "spawn" | "spawnTerminal",
->(
-	target: SubprocessRuntime,
-	name: K,
-	original: SubprocessRuntime[K],
-	wrapped: SubprocessRuntime[K],
-) {
-	if (target[name] !== wrapped) return;
-	target[name] = original;
-}
-
 /** Install dsh-direnv as a transparent adapter for session-workspace subprocess calls. */
 export function installDirenvDirectAdapter(ctx: Context): { dispose(): void } {
 	const target = ctx.subprocess;
-	const originalResolve = target.resolveExecutable;
-	const originalSpawn = target.spawn;
-	const originalSpawnTerminal = target.spawnTerminal;
+	const handles: ChainHandle[] = [];
+	const dispose = () => {
+		for (const handle of handles.splice(0).reverse()) handle.dispose();
+	};
 
 	const prepare = async (explicitEnv: SubprocessSpawnSpec["env"]) => {
 		if (!ctx.direnv.enabled) return explicitEnv;
@@ -170,50 +159,39 @@ export function installDirenvDirectAdapter(ctx: Context): { dispose(): void } {
 		return { ...env, ...explicitEnv };
 	};
 
-	const wrappedResolve: SubprocessRuntime["resolveExecutable"] = async (
-		command,
-		env,
-		signal,
-	) => {
-		const prepared = await prepare(env);
-		return originalResolve.call(target, command, stringEnv(prepared), signal);
-	};
-	target.resolveExecutable = wrappedResolve;
-
-	const wrappedSpawn: SubprocessRuntime["spawn"] = (spec) => {
-		const actual = prepare(spec.env)
-			.catch(() => spec.env)
-			.then((env) => originalSpawn.call(target, { ...spec, env }));
-		return deferredHandle(spec, actual);
-	};
-	target.spawn = wrappedSpawn;
-
-	const wrappedSpawnTerminal: SubprocessRuntime["spawnTerminal"] = async (
-		spec,
-	) => {
-		const prepared = await prepare(spec.env);
-		return originalSpawnTerminal.call(target, {
-			...spec,
-			env: stringEnv(prepared),
-		});
-	};
-	target.spawnTerminal = wrappedSpawnTerminal;
-
-	return {
-		dispose() {
-			restoreMethod(
+	try {
+		handles.push(
+			installChainLink(
 				target,
 				"resolveExecutable",
-				originalResolve,
-				wrappedResolve,
-			);
-			restoreMethod(target, "spawn", originalSpawn, wrappedSpawn);
-			restoreMethod(
+				async (next, _thisArg, [command, env, signal]) => {
+					const prepared = await prepare(env);
+					return next(command, stringEnv(prepared), signal);
+				},
+			),
+		);
+		handles.push(
+			installChainLink(target, "spawn", (next, _thisArg, [spec]) => {
+				const actual = prepare(spec.env)
+					.catch(() => spec.env)
+					.then((env) => next({ ...spec, env }));
+				return deferredHandle(spec, actual);
+			}),
+		);
+		handles.push(
+			installChainLink(
 				target,
 				"spawnTerminal",
-				originalSpawnTerminal,
-				wrappedSpawnTerminal,
-			);
-		},
-	};
+				async (next, _thisArg, [spec]) => {
+					const prepared = await prepare(spec.env);
+					return next({ ...spec, env: stringEnv(prepared) });
+				},
+			),
+		);
+	} catch (error) {
+		dispose();
+		throw error;
+	}
+
+	return { dispose };
 }

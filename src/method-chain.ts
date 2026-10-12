@@ -24,11 +24,27 @@ import { getPropertyDescriptor, symbols } from "@deepseek-ai/cordis";
  * method when this is the innermost one; calling it with no arguments forwards
  * the link's own arguments unchanged.
  */
-export type ChainWrapper<T extends object, _K extends keyof T> = (
-	next: (...forwarded: unknown[]) => unknown,
+type MethodKeys<T> = {
+	[K in keyof T]-?: T[K] extends (...args: never[]) => unknown ? K : never;
+}[keyof T];
+
+type MethodArgs<T, K extends keyof T> = T[K] extends (
+	...args: infer A
+) => unknown
+	? A
+	: never;
+
+type MethodResult<T, K extends keyof T> = T[K] extends (
+	...args: never[]
+) => infer R
+	? R
+	: never;
+
+export type ChainWrapper<T extends object, K extends keyof T> = (
+	next: (...forwarded: [] | MethodArgs<T, K>) => MethodResult<T, K>,
 	thisArg: T,
-	args: unknown[],
-) => unknown;
+	args: MethodArgs<T, K>,
+) => MethodResult<T, K>;
 
 /** The installed chain; disposing a link reverts the target when it was the last. */
 export interface ChainHandle {
@@ -38,7 +54,11 @@ export interface ChainHandle {
 
 interface Link {
 	alive: boolean;
-	invoke: (next: () => unknown, thisArg: unknown, args: unknown[]) => unknown;
+	invoke: (
+		next: (...forwarded: unknown[]) => unknown,
+		thisArg: unknown,
+		args: unknown[],
+	) => unknown;
 }
 
 interface ChainState {
@@ -71,7 +91,7 @@ function targetOf<T extends object>(value: T): object {
  * @returns the handle that removes exactly this link.
  * @throws TypeError when the method is missing or not a function.
  */
-export function installChainLink<T extends object, K extends keyof T>(
+export function installChainLink<T extends object, K extends MethodKeys<T>>(
 	value: T,
 	method: K,
 	invoke: ChainWrapper<T, K>,
@@ -104,23 +124,23 @@ export function installChainLink<T extends object, K extends keyof T>(
 			// replaced method observe. Iterating a reversed snapshot also makes the
 			// dispatch immune to a link disposing itself mid-call.
 			const live = fresh.links.filter((link) => link.alive).reverse();
-			let index = 0;
-			const step = (...nextArgs: unknown[]): unknown => {
-				const link = live[index++];
+			const step = (index: number, currentArgs: unknown[]): unknown => {
+				const link = live[index];
 				if (link === undefined) {
 					return Reflect.apply(
 						fresh.original as (...a: unknown[]) => unknown,
 						thisArg,
-						nextArgs.length === 0 ? args : nextArgs,
+						currentArgs,
 					);
 				}
 				return link.invoke(
-					step,
+					(...forwarded) =>
+						step(index + 1, forwarded.length === 0 ? currentArgs : forwarded),
 					thisArg,
-					nextArgs.length === 0 ? args : nextArgs,
+					currentArgs,
 				);
 			};
-			return step();
+			return step(0, args);
 		};
 		const trampoline = function (this: unknown, ...args: unknown[]): unknown {
 			return dispatch(this, args);

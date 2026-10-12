@@ -166,8 +166,7 @@ export function installDirenvShellAdapter(
 	const executeLink = installChainLink(
 		ctx.shell,
 		"execute",
-		async (next, _thisArg, args) => {
-			const spec = args[0] as ShellExecSpec | undefined;
+		async (next, _thisArg, [spec]) => {
 			if (spec === undefined || typeof spec.command !== "string") return next();
 			if (!ctx.direnv.enabled) return next();
 
@@ -198,7 +197,7 @@ export function installDirenvShellAdapter(
 				Object.keys(merged).length === 0
 					? spec
 					: { ...spec, env: merged as Record<string, string> };
-			const execution = (await next(nextSpec)) as ShellExecution;
+			const execution = await next(nextSpec);
 			return notice === undefined ? execution : withNotice(execution, notice);
 		},
 	);
