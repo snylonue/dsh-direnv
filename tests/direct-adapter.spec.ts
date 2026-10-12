@@ -24,7 +24,7 @@ describe("direct subprocess direnv adapter", () => {
 			direnv: {
 				enabled: true,
 				workspaceFor: () => "/workspace",
-				forWorkspace: async () => ({ env: {}, status: { kind: "loaded" } }),
+				forWorkspace: () => ({ env: {}, status: { kind: "injected" } }),
 			},
 		};
 		const adapter = installDirenvDirectAdapter(context as never);
@@ -55,10 +55,9 @@ describe("direct subprocess direnv adapter", () => {
 		const terminalHandle = { id: "terminal" };
 		const spawnTerminal = vi.fn(async (_spec: unknown) => terminalHandle);
 		const subprocess = { resolveExecutable, spawn, spawnTerminal };
-		const probeDirectory = vi.fn((workspace: string) => workspace);
-		const forWorkspace = vi.fn(async () => ({
+		const forWorkspace = vi.fn(() => ({
 			env: { FROM_DIRENV: "yes", SHARED: "direnv", REMOVED: undefined },
-			status: { kind: "loaded" },
+			status: { kind: "injected" },
 		}));
 		const context = {
 			subprocess,
@@ -66,7 +65,6 @@ describe("direct subprocess direnv adapter", () => {
 			direnv: {
 				enabled: true,
 				workspaceFor: () => "/workspace",
-				probeDirectory,
 				forWorkspace,
 			},
 		};
@@ -84,7 +82,7 @@ describe("direct subprocess direnv adapter", () => {
 		});
 		await spawned.done;
 
-		expect(probeDirectory).not.toHaveBeenCalled();
+		expect(spawned).toBe(handle);
 		expect(forWorkspace).toHaveBeenCalledTimes(2);
 		expect(forWorkspace).toHaveBeenCalledWith("/workspace");
 		expect(spawn).toHaveBeenCalledWith(
@@ -128,8 +126,7 @@ describe("direct subprocess direnv adapter", () => {
 			direnv: {
 				enabled: true,
 				workspaceFor: () => "/workspace",
-				probeDirectory: () => "/workspace",
-				forWorkspace: async () => ({
+				forWorkspace: () => ({
 					env: { IGNORED: "yes" },
 					status: { kind: "no-rc" },
 				}),

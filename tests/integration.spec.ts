@@ -286,6 +286,7 @@ async function boot(
 			}
 		},
 	);
+	await ctx.direnv.reload(box.workspace);
 	const adapter = installDirenvShellAdapter(ctx);
 	currentAgent = { session: { header: { cwd: box.workspace } } };
 	return {
@@ -511,7 +512,7 @@ describeReal("direnv injection (real direnv)", () => {
 		}
 	});
 
-	it("re-blocks after content changes, and unblocks after a new allow", async () => {
+	it("checks changed content and external authorization on explicit reload", async () => {
 		const box = sandbox();
 		const rc = writeRc(box, ".", "export V=v1\n");
 		const app = await boot(box);
@@ -519,12 +520,16 @@ describeReal("direnv injection (real direnv)", () => {
 			await app.shell.run(app.shell.resolve({ command: "true" }));
 			expect(app.shell.last().env?.V).toBe("v1");
 			writeFileSync(rc, "export V=v2\n");
+			await app.shell.run(app.shell.resolve({ command: "true" }));
+			expect(app.shell.last().env?.V).toBe("v1");
+			await app.ctx.direnv.reload(box.workspace);
 			const blocked = await (
 				await app.ctx.shell.execute(app.shell.resolve({ command: "true" }))
 			).result();
 			expect(app.shell.last().env).toBeUndefined();
 			expect(blocked.stderr.text).toContain("[dsh-direnv]");
 			allowWithRealDirenv(box, rc);
+			await app.ctx.direnv.reload(box.workspace);
 			await app.shell.run(app.shell.resolve({ command: "true" }));
 			expect(app.shell.last().env?.V).toBe("v2");
 		} finally {
@@ -532,7 +537,7 @@ describeReal("direnv injection (real direnv)", () => {
 		}
 	});
 
-	it("gives a nested package its own .envrc, like native direnv", async () => {
+	it("uses the fixed session workspace even for nested command workdirs", async () => {
 		const box = sandbox();
 		writeRc(box, ".", "export ROOT_VAR=root\n");
 		writeRc(box, "packages/api", "export PKG_VAR=api\n");
@@ -543,8 +548,8 @@ describeReal("direnv injection (real direnv)", () => {
 				app.shell.resolve({ command: "true", workdir: nested }),
 			);
 			const nestedEnv = app.shell.last().env ?? {};
-			expect(nestedEnv.PKG_VAR).toBe("api");
-			expect("ROOT_VAR" in nestedEnv).toBe(false);
+			expect(nestedEnv.ROOT_VAR).toBe("root");
+			expect("PKG_VAR" in nestedEnv).toBe(false);
 			await app.shell.run(app.shell.resolve({ command: "true" }));
 			const rootEnv = app.shell.last().env ?? {};
 			expect(rootEnv.ROOT_VAR).toBe("root");
@@ -554,11 +559,11 @@ describeReal("direnv injection (real direnv)", () => {
 		}
 	});
 
-	it("uses only the workspace root when followWorkdir is off", async () => {
+	it("uses the workspace root for every command", async () => {
 		const box = sandbox();
 		writeRc(box, ".", "export ROOT_VAR=root\n");
 		writeRc(box, "packages/api", "export PKG_VAR=api\n");
-		const app = await boot(box, { followWorkdir: false });
+		const app = await boot(box);
 		try {
 			await app.shell.run(
 				app.shell.resolve({
@@ -631,7 +636,7 @@ describeReal("direnv injection (real direnv)", () => {
 		}
 	});
 
-	it("stops injecting after the .envrc is deleted", async () => {
+	it("stops injecting a removed RC after explicit reload", async () => {
 		const box = sandbox();
 		const rc = writeRc(box, ".", "export X=1\n");
 		const app = await boot(box);
@@ -639,6 +644,7 @@ describeReal("direnv injection (real direnv)", () => {
 			await app.shell.run(app.shell.resolve({ command: "true" }));
 			expect(app.shell.last().env?.X).toBe("1");
 			rmSync(rc);
+			await app.ctx.direnv.reload(box.workspace);
 			await app.shell.run(app.shell.resolve({ command: "true" }));
 			expect(app.shell.last().env).toBeUndefined();
 		} finally {
@@ -656,12 +662,14 @@ describeReal("direnv injection (real direnv)", () => {
 			);
 			const denied = spawnSync("direnv", ["deny", rc], { env: direnvEnv(box) });
 			expect(denied.status).toBe(0);
+			await app.ctx.direnv.reload(box.workspace);
 			expect(await app.ctx.direnv.statusFor(box.workspace)).toMatchObject({
 				kind: "denied",
 				rcPath: rc,
 				env: {},
 			});
 			allowWithRealDirenv(box, rc);
+			await app.ctx.direnv.reload(box.workspace);
 			expect((await app.ctx.direnv.statusFor(box.workspace)).kind).toBe(
 				"no-rc",
 			);

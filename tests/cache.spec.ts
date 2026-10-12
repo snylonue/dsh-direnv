@@ -2,8 +2,7 @@
  * Per-workspace cache and manual reload, against the REAL direnv binary.
  *
  * The cache exists to avoid paying direnv's startup cost on every command, so
- * these tests assert both halves of the bargain: the probe is skipped while
- * nothing changes, and every way the answer CAN change is still observed.
+ * these tests verify synchronous reads and changes applied only on explicit reload.
  *
  * @module tests/cache
  */
@@ -133,154 +132,156 @@ function writeRc(box: Sandbox, body: string): string {
 	return rc;
 }
 
-describeReal("per-workspace cache", () => {
-	it("probes once and reuses the result", async () => {
+describeReal("workspace snapshots", () => {
+	it("reads synchronously without status or export rechecks", async () => {
 		const box = sandbox();
 		writeRc(box, "export CACHED=yes\n");
 		const app = await boot(box);
 		try {
-			expect(envNames((await app.service.statusFor(box.ws)).env)).toEqual([
-				"CACHED",
-			]);
-			expect(app.probes).toBe(1);
-			for (let i = 0; i < 5; i += 1) await app.service.statusFor(box.ws);
+			await app.service.reload(box.ws);
+			const calls = vi.mocked(ChildProcess.spawn).mock.calls.length;
+			for (let i = 0; i < 5; i += 1) {
+				expect(app.service.statusFor(box.ws).env.CACHED).toBe("yes");
+				expect(app.service.forWorkspace(box.ws).env.CACHED).toBe("yes");
+				app.service.describe(box.ws);
+				await app.ctx.shell.execute({ command: "true" } as never);
+			}
+			expect(vi.mocked(ChildProcess.spawn).mock.calls).toHaveLength(calls);
 			expect(app.probes).toBe(1);
 		} finally {
 			await app.dispose();
 		}
 	});
 
-	it("caches per directory, not globally", async () => {
+	it("does not lazily resolve an unknown workspace", async () => {
+		const box = sandbox();
+		writeRc(box, "export V=1\n");
+		const app = await boot(box);
+		try {
+			expect(app.service.statusFor(box.ws)).toMatchObject({
+				kind: "error",
+				env: {},
+			});
+			expect(app.service.forWorkspace(box.ws).notice).toContain(
+				"direnv_reload",
+			);
+			expect(vi.mocked(ChildProcess.spawn)).not.toHaveBeenCalled();
+		} finally {
+			await app.dispose();
+		}
+	});
+
+	it("stores different workspaces independently", async () => {
 		const box = sandbox();
 		writeRc(box, "export ROOT=1\n");
 		const sub = join(box.ws, "pkg");
-		mkdirSync(sub, { recursive: true });
-		const subRc = join(sub, ".envrc");
-		writeFileSync(subRc, "export SUB=1\n");
-		spawnSync("direnv", ["allow", subRc], { env: box.env });
+		mkdirSync(sub);
+		const rc = join(sub, ".envrc");
+		writeFileSync(rc, "export SUB=1\n");
+		spawnSync("direnv", ["allow", rc], { env: box.env });
 		const app = await boot(box);
 		try {
-			expect(envNames((await app.service.statusFor(box.ws)).env)).toEqual([
-				"ROOT",
-			]);
-			expect(envNames((await app.service.statusFor(sub)).env)).toEqual(["SUB"]);
+			await app.service.reload(box.ws);
+			await app.service.reload(sub);
+			expect(envNames(app.service.statusFor(box.ws).env)).toEqual(["ROOT"]);
+			expect(envNames(app.service.statusFor(sub).env)).toEqual(["SUB"]);
 			expect(app.probes).toBe(2);
 		} finally {
 			await app.dispose();
 		}
 	});
 
-	it("invalidates when the .envrc content changes", async () => {
+	it("keeps the snapshot after edits and checks authorization on explicit reload", async () => {
 		const box = sandbox();
 		const rc = writeRc(box, "export V=v1\n");
 		const app = await boot(box);
 		try {
-			expect((await app.service.statusFor(box.ws)).env.V).toBe("v1");
-			expect(app.probes).toBe(1);
+			await app.service.reload(box.ws);
 			writeFileSync(rc, "export V=v2\n");
-			// Content changed, so the authorization hash no longer matches: the
-			// cache must not serve the old value.
-			expect((await app.service.statusFor(box.ws)).kind).toBe("blocked");
+			expect(app.service.statusFor(box.ws).env.V).toBe("v1");
 			expect(app.probes).toBe(1);
+			await app.service.reload(box.ws);
+			expect(app.service.statusFor(box.ws)).toMatchObject({
+				kind: "blocked",
+				env: {},
+			});
 			spawnSync("direnv", ["allow", rc], { env: box.env });
-			expect((await app.service.statusFor(box.ws)).env.V).toBe("v2");
+			expect(app.service.statusFor(box.ws).kind).toBe("blocked");
+			await app.service.reload(box.ws);
+			expect(app.service.statusFor(box.ws).env.V).toBe("v2");
 		} finally {
 			await app.dispose();
 		}
 	});
 
-	it("sees a direnv allow run outside this harness", async () => {
+	it("observes external allow only on explicit reload", async () => {
 		const box = sandbox();
 		const rc = join(box.ws, ".envrc");
 		writeFileSync(rc, "export LATE=yes\n");
 		const app = await boot(box);
 		try {
-			// Unapproved at first: blocked, and cached as such.
-			expect((await app.service.statusFor(box.ws)).kind).toBe("blocked");
-			const afterFirst = app.probes;
-			// An approval performed entirely outside the plugin (the user in a
-			// terminal) rewrites direnv's allow store, which the stamp covers.
+			await app.service.reload(box.ws);
+			expect(app.service.statusFor(box.ws).kind).toBe("blocked");
 			spawnSync("direnv", ["allow", rc], { env: box.env });
-			expect((await app.service.statusFor(box.ws)).kind).toBe("injected");
-			expect(app.probes).toBeGreaterThan(afterFirst);
+			expect(app.service.statusFor(box.ws).kind).toBe("blocked");
+			await app.service.reload(box.ws);
+			expect(app.service.statusFor(box.ws).env.LATE).toBe("yes");
 		} finally {
 			await app.dispose();
 		}
 	});
 
-	it("sees a direnv deny run outside this harness", async () => {
+	it("observes external deny only on explicit reload", async () => {
 		const box = sandbox();
 		const rc = writeRc(box, "export DENIED=1\n");
 		const app = await boot(box);
 		try {
-			expect((await app.service.statusFor(box.ws)).kind).toBe("injected");
+			await app.service.reload(box.ws);
 			spawnSync("direnv", ["deny", rc], { env: box.env });
-			const after = await app.service.statusFor(box.ws);
-			expect(after.kind === "injected").toBe(false);
-			expect(envNames(after.env)).not.toContain("DENIED");
+			expect(app.service.statusFor(box.ws).env.DENIED).toBe("1");
+			await app.service.reload(box.ws);
+			expect(app.service.statusFor(box.ws)).toMatchObject({
+				kind: "denied",
+				env: {},
+			});
 		} finally {
 			await app.dispose();
 		}
 	});
 
-	it("stops injecting once the .envrc is deleted", async () => {
+	it("observes RC removal only on explicit reload", async () => {
 		const box = sandbox();
 		const rc = writeRc(box, "export GONE=1\n");
 		const app = await boot(box);
 		try {
-			expect((await app.service.statusFor(box.ws)).env.GONE).toBe("1");
+			await app.service.reload(box.ws);
 			rmSync(rc);
-			expect((await app.service.statusFor(box.ws)).kind).toBe("no-rc");
+			expect(app.service.statusFor(box.ws).env.GONE).toBe("1");
+			await app.service.reload(box.ws);
+			expect(app.service.statusFor(box.ws)).toMatchObject({
+				kind: "no-rc",
+				env: {},
+			});
 		} finally {
 			await app.dispose();
 		}
 	});
 
-	it("detects a new nearer RC after caching an ancestor", async () => {
-		const box = sandbox();
-		const rootRc = writeRc(box, "export ROOT=1\n");
-		const sub = join(box.ws, "pkg");
-		mkdirSync(sub);
-		const app = await boot(box);
-		try {
-			expect((await app.service.statusFor(sub)).rcPath).toBe(rootRc);
-			const rc = join(sub, ".envrc");
-			writeFileSync(rc, "export SUB=1\n");
-			spawnSync("direnv", ["allow", rc], { env: box.env });
-			const status = await app.service.statusFor(sub);
-			expect(status.rcPath).toBe(rc);
-			expect(envNames(status.env)).toEqual(["SUB"]);
-		} finally {
-			await app.dispose();
-		}
-	});
-
-	it("invalidates when native whitelist authorization changes", async () => {
-		const box = sandbox();
-		writeFileSync(join(box.ws, ".envrc"), "export WHITELISTED=1\n");
-		const app = await boot(box);
-		try {
-			expect((await app.service.statusFor(box.ws)).kind).toBe("blocked");
-			const configDir = join(box.root, "config", "direnv");
-			mkdirSync(configDir, { recursive: true });
-			writeFileSync(
-				join(configDir, "direnv.toml"),
-				`[whitelist]\nexact = [${JSON.stringify(box.ws)}]\n`,
-			);
-			expect((await app.service.statusFor(box.ws)).env.WHITELISTED).toBe("1");
-			expect(app.probes).toBe(1);
-		} finally {
-			await app.dispose();
-		}
-	});
-
-	it("probes every time when the cache is off", async () => {
+	it("shares concurrent explicit resolutions", async () => {
 		const box = sandbox();
 		writeRc(box, "export V=1\n");
-		const app = await boot(box, { cache: false });
+		const app = await boot(box);
 		try {
-			for (let i = 0; i < 3; i += 1) await app.service.statusFor(box.ws);
-			expect(app.probes).toBe(3);
+			await Promise.all([
+				app.service.reload(box.ws),
+				app.service.reload(box.ws),
+			]);
+			expect(app.probes).toBe(1);
+			expect(
+				vi
+					.mocked(ChildProcess.spawn)
+					.mock.calls.filter(([, args]) => args?.[0] === "status"),
+			).toHaveLength(1);
 		} finally {
 			await app.dispose();
 		}
@@ -334,7 +335,7 @@ describeReal("manual reload", () => {
 		writeRc(box, "export A=1\nexport B=2\n");
 		const app = await boot(box);
 		try {
-			await app.service.statusFor(box.ws);
+			await app.service.reload(box.ws);
 			const before = app.probes;
 			const report = await app.service.reload(box.ws);
 			expect(report.reloaded).toBe(1);
@@ -354,7 +355,7 @@ describeReal("manual reload", () => {
 		const rc = writeRc(box, "export KEEP=1\nexport DROP=2\n");
 		const app = await boot(box);
 		try {
-			await app.service.statusFor(box.ws);
+			await app.service.reload(box.ws);
 			writeFileSync(rc, "export KEEP=1\nexport FRESH=3\n");
 			spawnSync("direnv", ["allow", rc], { env: box.env });
 			const report = await app.service.reload(box.ws);
@@ -376,8 +377,8 @@ describeReal("manual reload", () => {
 		spawnSync("direnv", ["allow", subRc], { env: box.env });
 		const app = await boot(box);
 		try {
-			await app.service.statusFor(box.ws);
-			await app.service.statusFor(sub);
+			await app.service.reload(box.ws);
+			await app.service.reload(sub);
 			const report = await app.service.reload();
 			expect(report.reloaded).toBe(2);
 			expect(report.changed.map((c) => c.directory).sort()).toEqual(
@@ -399,15 +400,13 @@ describeReal("manual reload", () => {
 		}
 	});
 
-	it("picks up an external change that the stamp cannot see", async () => {
+	it("resolves again when explicitly requested", async () => {
 		const box = sandbox();
 		writeRc(box, "export V=1\n");
 		const app = await boot(box);
 		try {
-			await app.service.statusFor(box.ws);
-			// Simulate an unobservable dependency: clear the cache by hand, which is
-			// exactly what a manual reload does, and confirm the fresh read.
-			app.service.invalidate(box.ws);
+			await app.service.reload(box.ws);
+			// Explicit reload always resolves again, even when files are unchanged.
 			const report = await app.service.reload(box.ws);
 			expect(report.changed[0]?.kind).toBe("injected");
 		} finally {

@@ -79,6 +79,7 @@ async function boot(box: Sandbox) {
 	fibers.push(await ctx.plugin(SystemPrompt, {}));
 	fibers.push(await ctx.plugin(FakeAgents));
 	fibers.push(await ctx.plugin(DirenvService, { ...defaultConfig }));
+	await ctx.direnv.reload(box.workspace);
 	const adapter = installDirenvShellAdapter(ctx);
 	fibers.push(await ctx.plugin(ToolBash, {}));
 	fibers.push(await ctx.plugin(AllowTool));

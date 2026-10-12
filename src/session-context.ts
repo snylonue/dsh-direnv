@@ -3,12 +3,11 @@
  * state once and seed the model with a snapshot of it.
  *
  * This is the one true "inject at session start" seam in DSH:
- * `agent/created` fires once per entered agent, before its first turn, and
+ * `agent/created` awaits listeners once per entered agent before its first turn, and
  * `agent.inject()` queues model-facing context for the next pre-step. The
  * injected message names the workspace's direnv variables and states, but never
- * their values, and it resolves through the same provider cache the shell
- * adapter uses — so the first command after startup reuses this probe instead
- * of paying for another.
+ * their values. Startup saves the workspace result even when model-facing
+ * context is disabled. Both adapters read it synchronously without probing.
  *
  * Injection is best-effort by design. A session must still start when direnv is
  * missing, a workspace is unreadable, or a context message cannot be appended,
@@ -49,13 +48,13 @@ export async function injectSessionContext(
 	agent: Agent,
 ): Promise<void> {
 	try {
-		if (!ctx.direnv.enabled || !ctx.direnv.settings.sessionContext) return;
+		if (!ctx.direnv.enabled) return;
 		const workspace = ctx.direnv.workspaceFor(agent);
 		if (workspace === undefined) return;
 
-		// Resolving answers the context AND warms the per-directory cache, so the
-		// session's first command reuses this probe.
-		const status = await ctx.direnv.statusFor(workspace);
+		await ctx.direnv.reload(workspace);
+		if (!ctx.direnv.settings.sessionContext) return;
+		const status = ctx.direnv.statusFor(workspace);
 		const text = sessionContextText(status, workspace);
 		if (text === undefined) return;
 
@@ -99,10 +98,10 @@ export async function injectSessionContext(
 export function installDirenvSessionContext(
 	ctx: Context,
 ): DirenvSessionContextHandle {
-	const off = ctx.on("agent/created", ({ agent }) => {
+	const off = ctx.on("agent/created", async ({ agent }) => {
 		// Best-effort: the helper contains its own failures, so the promise it
 		// returns can never reject into the lifecycle.
-		void injectSessionContext(ctx, agent);
+		await injectSessionContext(ctx, agent);
 		return undefined;
 	});
 	return { dispose: () => void off() };

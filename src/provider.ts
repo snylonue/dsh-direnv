@@ -10,16 +10,13 @@
  * into the child environment, so no workspace-controlled byte ever reaches a
  * command line.
  *
- * Resolutions are cached per directory, but only behind a stamp over everything
- * that can change the answer, so a stale result is never served. Probes are
- * asynchronous: a heavy `.envrc` (Nix, a network fetch) never blocks the
- * harness's event loop, and concurrent commands in one unchanged directory
- * share a single in-flight probe. An allowed `.envrc` typically costs tens of
- * milliseconds; a refusal is faster still.
+ * Workspaces are resolved at session startup or by an explicit reload. Commands
+ * synchronously read the last snapshot; they never check files or run direnv.
+ * Resolution remains asynchronous so a heavy `.envrc` leaves the event loop free.
  *
  * @module dsh-direnv
  */
-import { dirname, resolve as resolvePath } from "node:path";
+import { resolve as resolvePath } from "node:path";
 import type { ExecFileException } from "node:child_process";
 import { execFileNoStdin } from "./process.js";
 import { Service, type Context } from "@deepseek-ai/cordis";
@@ -27,19 +24,16 @@ import type { Agent } from "@deepseek-ai/dsh-agent";
 import z from "@deepseek-ai/schemastery";
 import {
 	blockedNotice,
-	cacheStamp,
 	defaultConfig,
 	describeStatus,
 	envNames,
 	readNativeStatus,
-	isExistingDirectory,
 	isAbsolutePath,
 	refuseAllow,
 	resolveStatus,
 	type DirenvConfig,
 	type DirenvStatus,
 	type InjectableEnv,
-	type NativeRc,
 } from "./core.js";
 
 declare module "@deepseek-ai/cordis" {
@@ -97,8 +91,6 @@ export default class DirenvService extends Service {
 		restrictAllowToWorkspace: z
 			.boolean()
 			.default(defaultConfig.restrictAllowToWorkspace),
-		followWorkdir: z.boolean().default(defaultConfig.followWorkdir),
-		cache: z.boolean().default(defaultConfig.cache),
 	}) as z<DirenvConfig>;
 
 	/**
@@ -136,112 +128,76 @@ export default class DirenvService extends Service {
 		return resolvePath(cwd);
 	}
 
-	/**
-	 * The directory whose `.envrc` governs one call: the command's own working
-	 * directory when `followWorkdir` is on and that directory exists, otherwise
-	 * the session workspace root. Matching native direnv here is what makes a
-	 * nested package's `.envrc` work instead of silently applying the root's.
-	 */
-	probeDirectory(workspace: string, workdir: string | undefined): string {
-		if (!this.config.followWorkdir) return workspace;
-		if (!isAbsolutePath(workdir)) return workspace;
-		return isExistingDirectory(workdir) ? workdir : workspace;
-	}
+	/** Resolved snapshots; command execution only reads these synchronously. */
+	private readonly snapshots = new Map<string, DirenvStatus>();
 
-	/**
-	 * One cached resolution. `stamp` covers the RC file and direnv's own
-	 * allow/deny stores. Native status supplies the RC path and authorization
-	 * state; a cache hit avoids running export, not the lightweight status query.
-	 */
-	private readonly cache = new Map<
-		string,
-		{ status: DirenvStatus; stamp: string }
-	>();
-
-	/** Probes in flight, keyed by directory plus stamp, so concurrent commands share one. */
+	/** Concurrent explicit resolutions of a workspace share one probe. */
 	private readonly inflight = new Map<string, Promise<DirenvStatus>>();
 
-	/**
-	 * Reuse the native status already obtained for this resolution; do not
-	 * start another status process when recording or rechecking the stamp.
-	 */
-	private stampFor(rc: NativeRc | null): string {
-		return `${JSON.stringify(rc)}:${cacheStamp(rc?.path)}`;
-	}
-
-	/**
-	 * Resolve one directory's direnv state, consulting the cache when enabled.
-	 * The probe is asynchronous: a heavy `.envrc` never blocks the harness's
-	 * event loop, and concurrent commands in one unchanged directory share a
-	 * single in-flight probe.
-	 */
-	async statusFor(probeDir: string): Promise<DirenvStatus> {
+	/** Read the last resolved state without any process or filesystem access. */
+	statusFor(workspace: string): DirenvStatus {
 		if (!this.config.enabled) return { kind: "disabled", env: {}, dropped: [] };
-		let rc: NativeRc | null;
-		try {
-			rc = await readNativeStatus(probeDir, this.config);
-		} catch (error) {
-			return {
+		return (
+			this.snapshots.get(workspace) ?? {
 				kind: "error",
 				env: {},
 				dropped: [],
-				detail: error instanceof Error ? error.message : String(error),
-			};
-		}
-		if (!this.config.cache) return resolveStatus(probeDir, this.config, rc);
+				detail:
+					"workspace environment is not loaded; reopen the session or call direnv_reload",
+			}
+		);
+	}
 
-		const stamp = this.stampFor(rc);
-		const hit = this.cache.get(probeDir);
-		if (hit !== undefined && hit.stamp === stamp) return hit.status;
-
-		const key = `${probeDir}\u0000${stamp}`;
-		const pending =
-			this.inflight.get(key) ?? resolveStatus(probeDir, this.config, rc);
-		this.inflight.set(key, pending);
-		let status: DirenvStatus;
+	private async resolveWorkspace(workspace: string): Promise<DirenvStatus> {
+		const existing = this.inflight.get(workspace);
+		if (existing !== undefined) return existing;
+		const pending = (async (): Promise<DirenvStatus> => {
+			let status: DirenvStatus;
+			try {
+				status = this.config.enabled
+					? await resolveStatus(
+							workspace,
+							this.config,
+							await readNativeStatus(workspace, this.config),
+						)
+					: { kind: "disabled", env: {}, dropped: [] };
+			} catch (error) {
+				status = {
+					kind: "error",
+					env: {},
+					dropped: [],
+					detail: error instanceof Error ? error.message : String(error),
+				};
+			}
+			this.snapshots.set(workspace, status);
+			return status;
+		})();
+		this.inflight.set(workspace, pending);
 		try {
-			status = await pending;
+			return await pending;
 		} finally {
-			if (this.inflight.get(key) === pending) this.inflight.delete(key);
+			this.inflight.delete(workspace);
 		}
-		// A concurrent probe or an external change may have moved the stamp on.
-		if (this.stampFor(rc) === stamp)
-			this.cache.set(probeDir, { status, stamp });
-		return status;
 	}
 
 	/**
-	 * Drop cached resolutions. With a directory, drops just that one; without,
-	 * drops every workspace. Called after a successful `direnv allow` and by the
-	 * `direnv_reload` tool.
+	 * Resolve one workspace (or all previously resolved workspaces) explicitly.
+	 * Session startup also calls this; command execution never does.
+	 * Report the current filtered direnv set/unset diff, not a cache comparison.
 	 */
-	invalidate(probeDir?: string): void {
-		if (probeDir === undefined) this.cache.clear();
-		else this.cache.delete(probeDir);
-	}
-
-	/**
-	 * Re-resolve one directory (or every cached directory) now, bypassing the
-	 * cache, and report direnv's current set/unset diff, not a cache comparison.
-	 * The stamp is recorded so a following
-	 * command reuses this result rather than probing again.
-	 */
-	async reload(probeDir?: string): Promise<ReloadReport> {
-		// Snapshot the keys first: resolving a directory re-inserts it, and the
-		// "reload everything" form must not chase its own insertions.
+	async reload(workspace?: string): Promise<ReloadReport> {
 		const targets =
-			probeDir === undefined ? [...this.cache.keys()] : [probeDir];
+			workspace === undefined ? [...this.snapshots.keys()] : [workspace];
 		const changed: ReloadChange[] = [];
 		for (const dir of targets) {
-			this.invalidate(dir);
-			const after = await this.statusFor(dir);
-			const afterNames = envNames(after.env);
+			const after = await this.resolveWorkspace(dir);
+			const names = envNames(after.env);
 			changed.push({
 				directory: dir,
 				kind: after.kind,
-				variables: afterNames.length,
+				variables: names.length,
 				...(after.rcPath === undefined ? {} : { rcPath: after.rcPath }),
-				added: afterNames,
+				added: names,
 				removed: Object.keys(after.env)
 					.filter((name) => after.env[name] === undefined)
 					.sort(),
@@ -250,14 +206,13 @@ export default class DirenvService extends Service {
 		return { reloaded: targets.length, changed };
 	}
 
-	/**
-	 * The environment to merge into one shell call, plus the actionable notice
-	 * to append when the workspace could not be injected.
-	 */
-	async forWorkspace(
-		workspace: string,
-	): Promise<{ env: InjectableEnv; status: DirenvStatus; notice?: string }> {
-		const status = await this.statusFor(workspace);
+	/** The stored environment patch and optional command notice. No probing. */
+	forWorkspace(workspace: string): {
+		env: InjectableEnv;
+		status: DirenvStatus;
+		notice?: string;
+	} {
+		const status = this.statusFor(workspace);
 		const notice = this.config.notifyOnBlocked
 			? blockedNotice(status, workspace)
 			: undefined;
@@ -268,12 +223,12 @@ export default class DirenvService extends Service {
 		};
 	}
 
-	/** A log-safe one-line description of one workspace's state. */
-	async describe(workspace: string): Promise<string> {
-		return describeStatus(await this.statusFor(workspace));
+	/** A log-safe description of the stored workspace state. */
+	describe(workspace: string): string {
+		return describeStatus(this.statusFor(workspace));
 	}
 
-	/** The refusal reason for approving `rcPath` on behalf of `workspace`. */
+	/** The refusal reason for approving an RC on behalf of a workspace. */
 	refusalFor(
 		rcPath: string,
 		workspace: string | undefined,
@@ -281,12 +236,7 @@ export default class DirenvService extends Service {
 		return refuseAllow(rcPath, workspace, this.config.restrictAllowToWorkspace);
 	}
 
-	/**
-	 * Approve one RC file by running the host's own `direnv allow`, which
-	 * authorizes the CURRENT file content. The caller is responsible for having
-	 * obtained explicit user consent first; this method only performs the
-	 * approval and reports direnv's own verdict.
-	 */
+	/** Approve current file content after explicit user consent. Does not reload. */
 	async approve(
 		rcPath: string,
 		workspace: string | undefined,
@@ -303,24 +253,8 @@ export default class DirenvService extends Service {
 				reason: `direnv allow exited with code ${String(failure.code)}${detail.length === 0 ? "" : `: ${detail}`}`,
 			};
 		}
-		// The approval just changed direnv's authorization, so every cached answer
-		// that depended on it is stale. The cache is keyed by the directory that was
-		// probed, and with `followWorkdir` on that is the RC's own directory rather
-		// than the session workspace, so drop both.
-		this.invalidate(dirnameOf(rcPath));
-		this.invalidate(workspace);
 		return { ok: true };
 	}
-}
-
-/**
- * The directory that owns an RC file, which is the key a probe of that RC is
- * cached under.
- * @param rcPath - absolute path of a `.envrc`.
- * @returns its directory.
- */
-function dirnameOf(rcPath: string): string {
-	return dirname(resolvePath(rcPath));
 }
 
 /** The first non-empty line of a diagnostic, ANSI-stripped and bounded. */
@@ -335,7 +269,7 @@ export function firstLine(text: string): string {
 	return line.length > 300 ? `${line.slice(0, 297)}...` : line;
 }
 
-/** Run `direnv allow <rcPath>` with a fixed argv and no shell, without blocking. */
+/** Run direnv allow with a fixed argv, without blocking the event loop. */
 export async function runAllow(
 	rcPath: string,
 	config: DirenvConfig,

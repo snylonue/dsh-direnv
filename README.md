@@ -9,17 +9,17 @@ environment, and a blocked `.envrc` produces an actionable notice plus a
 
 | | |
 |---|---|
-| **Injects** | the environment `direnv export json` reports for the command's directory, merged into the child's environment map |
-| **Per workspace** | the workspace comes from the calling agent's session cwd; the command's own `workdir` selects a nested `.envrc`, like native direnv |
+| **Injects** | the environment `direnv export json` reports for the session workspace, merged into the child's environment map |
+| **Per workspace** | the workspace is fixed by the calling agent's session cwd; command `workdir` never selects another environment |
 | **Announces at startup** | starting a session injects one model-facing snapshot naming the workspace's direnv variables, or why none loaded; values are never included and a workspace with no `.envrc` stays silent |
 | **Never wraps commands** | `request.command` is byte-identical to what the model asked for — injection is an environment map, so a workspace cannot inject shell syntax |
 | **Asks before allowing** | `direnv_allow` routes through DSH's approval channel before running `direnv allow` |
-| **Fails closed** | a blocked, denied, or changed `.envrc` injects nothing and says so; no approval service means no approval |
+| **Fails closed** | resolution refuses blocked or denied files; commands use the saved snapshot until explicit reload; no approval service means no approval |
 
 ## Session-start context
 
 When a session starts, the plugin resolves its workspace once and queues one
-model-facing context message (`agent/session-start` + `agent.inject()`)
+model-facing context message (`agent/created` + `agent.inject()`)
 before the first turn. The model therefore knows, without running anything,
 whether the workspace has an active direnv environment:
 
@@ -37,9 +37,10 @@ immediately. A workspace with no `.envrc` stays silent, and the message is a
 `snapshot`: a resumed or compacted session re-publishes the current state
 instead of accumulating stale copies.
 
-Resolving at startup also warms the per-directory cache, so the session's first
-command reuses that probe instead of paying for a second one. Set
-`sessionContext: false` to suppress the message entirely.
+Session creation awaits this asynchronous resolution before the first turn.
+Every later command reads the saved environment synchronously, without running
+direnv or checking files. Set `sessionContext: false` to suppress the message;
+the workspace is still resolved.
 
 ## The blocked-workspace UX
 
@@ -61,8 +62,9 @@ without reading or previewing the file contents. Only
 all refuse, and the file is written by the host's own `direnv allow`.
 
 `direnv allow` authorizes the file content at execution time: editing the `.envrc`
-afterwards invalidates it in direnv's own hash, and the next command is blocked
-again until it is re-approved.
+afterwards invalidates it in direnv's own hash. The saved environment stays active
+until an explicit reload, which reports the file as blocked until re-approved.
+The `direnv_allow` tool refreshes the session workspace after a successful approval.
 
 A **denied** `.envrc` is reported distinctly, because direnv ≥ 2.33 makes
 `direnv deny` revoke authorization *silently* — `direnv export` still exits
@@ -72,40 +74,31 @@ from a legitimately empty file, so the plugin consults direnv's own deny store
 gets its own notice pointing at `direnv status`; an empty one is treated as
 "nothing to inject" and stays quiet.
 
-## Caching and manual reload
+## Workspace snapshots and explicit reload
 
-Each resolution asks `direnv status --json` for the native RC path and
-authorization state, respecting direnv's configuration (including `load_dotenv`).
-This status query does not evaluate the RC. The export result is cached per
-directory, so unchanged commands avoid re-running `direnv export`. Cache checks
-reuse that native status and inspect:
+At session startup, the plugin runs `direnv status --json` and
+`direnv export json` asynchronously in the fixed workspace, respecting native
+RC discovery and authorization. Startup waits for the result; a failed resolution
+is saved as an error and does not prevent the session from starting.
 
-- the native RC path and authorization state;
-- the governing `.envrc` — its size and mtime (an edit also invalidates
-  direnv's own content hash);
-- direnv's **allow and deny stores** — so a `direnv allow` or `direnv deny`
-  run in your own terminal is observed, even though it changes no file the
-  plugin could otherwise see.
-
-Probes are **asynchronous**: the `direnv export` runs on its own process while
-the harness stays responsive, so a heavy `.envrc` (Nix, a network fetch) delays
-only the command that needs it. Concurrent commands in one unchanged directory
-share a single in-flight probe.
-
-When that is not enough — a dependency of the `.envrc` you changed, an
-environment direnv reads that this plugin cannot observe — call the
-`direnv_reload` tool:
+Commands only read the saved snapshot. There is no automatic refresh after file
+edits, deletions, dependency changes, or external `direnv allow/deny` calls.
+Use the model-facing tool explicitly to apply changes:
 
 ```text
-direnv_reload                          # re-resolve the calling workspace
-direnv_reload directory=/path/to/ws    # re-resolve one directory
-direnv_reload                          # with nothing cached: resolves nothing, says so
+direnv_reload                          # reload the calling session workspace
+direnv_reload directory=/path/to/ws    # reload an explicit workspace
 ```
 
-It reports each directory's resulting state and the variable names set or unset
-by the current direnv environment diff, after injection filtering. It does not
-compare against the old cache. It only reads: it never approves a file and needs
-no user approval.
+Changing a command's working directory never changes its direnv environment.
+Reloading another workspace does not switch the current session to it.
+The service's argument-less `reload()` refreshes all previously resolved workspaces;
+the tool's omitted directory selects the calling session workspace.
+
+Reload reports names set/unset by the current filtered native direnv diff, not
+changes relative to the saved snapshot. Values are never included. Reload does
+not approve files. The previous snapshot remains readable while reload runs and
+is replaced when resolution completes; subsequent commands use the new result.
 
 ## Configuration
 
@@ -119,8 +112,6 @@ no user approval.
     notifyOnBlocked: true       # append the actionable notice to results
     sessionContext: true        # inject one model-facing snapshot at session start
     restrictAllowToWorkspace: true  # direnv_allow may only name a file inside the agent's workspace
-    followWorkdir: true         # the command's own directory selects the .envrc
-    cache: true                 # resolve each directory once; reload on demand
 ```
 
 | Field | Default | Meaning |
@@ -131,8 +122,6 @@ no user approval.
 | `notifyOnBlocked` | `true` | Off keeps results byte-identical to an un-instrumented run. |
 | `sessionContext` | `true` | On, starting a session injects one model-facing snapshot naming the workspace's direnv variables (or why none loaded). Values are never included. |
 | `restrictAllowToWorkspace` | `true` | On, `direnv_allow` refuses any path outside the agent's workspace, including via `..` or a symlink. |
-| `followWorkdir` | `true` | On, a command run in `<ws>/packages/api` picks up *that* `.envrc`. Off, every command uses the session workspace root. |
-| `cache` | `true` | Resolve each directory once and reuse the result. The cache refreshes itself when the `.envrc` changes or when direnv's allow/deny store is rewritten, and `direnv_reload` forces a refresh. Each resolution still queries native status. Off, every command also runs export. |
 
 ## Installation
 

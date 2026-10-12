@@ -12,7 +12,6 @@
  */
 import type { ExecFileException } from "node:child_process";
 import { execFileNoStdin } from "./process.js";
-import { statSync } from "node:fs";
 import { basename, isAbsolute, join, resolve as resolvePath } from "node:path";
 import { realpathSync } from "node:fs";
 import { DSH_ENV_PREFIX } from "@deepseek-ai/dsh-shell";
@@ -73,25 +72,6 @@ export interface DirenvConfig {
 	 * arbitrary paths.
 	 */
 	restrictAllowToWorkspace: boolean;
-	/**
-	 * Whether a command's own working directory selects the `.envrc`, matching
-	 * native direnv. On, a command run in `<workspace>/packages/api` picks up
-	 * that package's `.envrc` rather than the repository root's, which is what
-	 * direnv itself would do. Off, every command in a session uses exactly the
-	 * session workspace root, which costs one probe per session instead of one
-	 * per distinct directory.
-	 */
-	followWorkdir: boolean;
-	/**
-	 * Whether to resolve each directory once and reuse the result.
-	 *
-	 * On, each resolution checks native status, but only cache misses evaluate
-	 * `direnv export`. The cache is invalidated automatically when
-	 * the `.envrc` changes or when direnv's allow/deny store is rewritten
-	 * (including by a `direnv allow` run outside this harness), and on demand by
-	 * the `direnv_reload` tool. Off, every command runs export as well as status.
-	 */
-	cache: boolean;
 }
 
 /** The plan's defaults. */
@@ -102,8 +82,6 @@ export const defaultConfig: DirenvConfig = {
 	notifyOnBlocked: true,
 	sessionContext: true,
 	restrictAllowToWorkspace: true,
-	followWorkdir: true,
-	cache: true,
 };
 
 /** Why a workspace produced no injectable environment. */
@@ -147,56 +125,6 @@ export function isAbsolutePath(value: unknown): value is string {
 export function assertAbsolutePath(value: unknown): asserts value is string {
 	if (!isAbsolutePath(value)) {
 		throw new TypeError("invalid path");
-	}
-}
-
-/**
- * A cheap identity for everything that can change what `direnv export` returns
- * for one directory:
- *
- * - the governing RC file (path, size, mtime) — an edit invalidates direnv's
- *   own content hash, so a new probe is mandatory;
- * - direnv's allow and deny stores (directory mtimes) — a `direnv allow` or
- *   `direnv deny` run OUTSIDE this harness changes neither the file nor its
- *   mtime, but it does rewrite one of those stores.
- *
- * The store paths follow direnv's own XDG layout so no direnv process is
- * needed to compute this. A missing entry contributes only its resolved path,
- * so the transition from "absent" to "present" changes the stamp.
- */
-export function cacheStamp(
-	rcPath: string | undefined,
-	env: NodeJS.ProcessEnv | undefined = process.env,
-): string {
-	const parts: string[] = [rcPath ?? "-"];
-	if (rcPath !== undefined) {
-		try {
-			const stat = statSync(rcPath);
-			parts.push(`${String(stat.size)}:${String(stat.mtimeMs)}`);
-		} catch {
-			parts.push("missing");
-		}
-	}
-	const storeDir = direnvStoreDir(env);
-	if (storeDir !== undefined) {
-		for (const store of ["allow", "deny"]) {
-			const dir = join(storeDir, store);
-			try {
-				parts.push(`${dir}:${String(statSync(dir).mtimeMs)}`);
-			} catch {
-				parts.push(`${dir}:absent`);
-			}
-		}
-	}
-	return parts.join("|");
-}
-
-/** Whether `path` names an existing directory. */
-export function isExistingDirectory(path: string): boolean {
-	try {
-		return statSync(path).isDirectory();
-	} catch {
-		return false;
 	}
 }
 

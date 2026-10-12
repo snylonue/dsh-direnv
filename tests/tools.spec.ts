@@ -449,13 +449,7 @@ describe("after an approval", () => {
 		}
 	});
 
-	// Regression: the count must come from the RC's own directory. Reporting the
-	// session workspace instead is invisible when the two coincide (the common
-	// case, and what the test above covers) but wrong as soon as a command runs in
-	// a nested package, where a different .envrc governs.
-	it("counts the variables of the RC directory, not of the session workspace", async () => {
-		// The two directories are deliberately different: the workspace holds a
-		// nested package whose own .envrc governs commands run inside it.
+	it("reports the fixed workspace environment even when approving a nested RC", async () => {
 		const workspace = scratch();
 		const nested = join(workspace, "packages", "inner");
 		mkdirSync(nested, { recursive: true });
@@ -480,11 +474,9 @@ describe("after an approval", () => {
 		try {
 			const result = await h.call({ path: rcPath });
 			expect(result.outcome).toBe("approved");
-			// Three names, so the probe that answered was the nested directory's.
-			expect(result.variables).toBe(3);
-			expect(probed).toContain(nested);
-			// No "no .envrc governs this workspace" footer: it IS governed.
-			expect(String(result.detail)).not.toContain("no .envrc governs");
+			expect(result.variables).toBe(0);
+			expect(probed).toContain(workspace);
+			expect(probed).not.toContain(nested);
 		} finally {
 			await h.dispose();
 		}

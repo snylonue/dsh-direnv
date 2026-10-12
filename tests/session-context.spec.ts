@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
-import { emitAgentEvent } from "@deepseek-ai/dsh-agent";
+import { agentEvents } from "@deepseek-ai/dsh-agent";
 import type { UserMessage } from "@deepseek-ai/dsh-llm";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import * as Core from "../src/core.js";
@@ -56,10 +56,6 @@ afterAll(() => {
 	for (const dir of roots.splice(0))
 		rmSync(dir, { recursive: true, force: true });
 });
-
-/** Let the fire-and-forget `agent/created` listener's async probe settle. */
-const flush = (): Promise<void> =>
-	new Promise((resolve) => setTimeout(resolve, 0));
 
 /** Return one `direnv export json` outcome. */
 function exported(diff: Record<string, string | null>): CommandResult {
@@ -316,11 +312,13 @@ describe("injectSessionContext", () => {
 		try {
 			await injectSessionContext(app.ctx, app.agent);
 			expect(app.probeCalls()).toBe(1);
-			// A later resolution through the same provider must reuse the warmed entry.
-			expect((await app.ctx.direnv.statusFor(app.workspace)).kind).toBe(
-				"injected",
-			);
+			const statusCalls = vi.mocked(Core.readNativeStatus).mock.calls.length;
+			// Reads reuse the startup snapshot without even querying native status.
+			expect(app.ctx.direnv.statusFor(app.workspace).kind).toBe("injected");
 			expect(app.probeCalls()).toBe(1);
+			expect(vi.mocked(Core.readNativeStatus).mock.calls).toHaveLength(
+				statusCalls,
+			);
 		} finally {
 			await app.dispose();
 		}
@@ -333,15 +331,88 @@ describe("injectSessionContext", () => {
 		});
 		try {
 			const listener = installDirenvSessionContext(app.ctx);
-			emitAgentEvent(app.ctx, app.agent, "agent/created", {
+			await agentEvents(app.ctx, app.agent).serial("agent/created", {
 				source: "startup",
 			});
-			await flush();
 			expect(app.injected).toHaveLength(1);
 			listener.dispose();
-			emitAgentEvent(app.ctx, app.agent, "agent/created", { source: "resume" });
-			await flush();
+			await agentEvents(app.ctx, app.agent).serial("agent/created", {
+				source: "resume",
+			});
 			expect(app.injected).toHaveLength(1);
+		} finally {
+			await app.dispose();
+		}
+	});
+	it("loads the workspace even when model-facing context is disabled", async () => {
+		const app = await boot({
+			rcPath: join(scratch(), ".envrc"),
+			probe: () => exported({ A: "1" }),
+			config: { sessionContext: false },
+		});
+		try {
+			const listener = installDirenvSessionContext(app.ctx);
+			await agentEvents(app.ctx, app.agent).serial("agent/created", {
+				source: "startup",
+			});
+			expect(app.ctx.direnv.statusFor(app.workspace).env.A).toBe("1");
+			expect(app.injected).toHaveLength(0);
+			expect(app.probeCalls()).toBe(1);
+			listener.dispose();
+		} finally {
+			await app.dispose();
+		}
+	});
+	it("awaits startup resolution before the creation event completes", async () => {
+		const rcPath = join(scratch(), ".envrc");
+		const app = await boot({ rcPath, probe: () => exported({ A: "1" }) });
+		let release = () => {};
+		vi.mocked(Core.readNativeStatus).mockImplementation(
+			() =>
+				new Promise((resolve) => {
+					release = () => resolve({ path: rcPath, allowed: 0 });
+				}),
+		);
+		try {
+			const listener = installDirenvSessionContext(app.ctx);
+			let ready = false;
+			const creation = agentEvents(app.ctx, app.agent)
+				.serial("agent/created", { source: "startup" })
+				.then(() => {
+					ready = true;
+				});
+			expect(vi.mocked(Core.readNativeStatus)).toHaveBeenCalledOnce();
+			expect(ready).toBe(false);
+			expect(app.ctx.direnv.statusFor(app.workspace).env).toEqual({});
+			release();
+			await creation;
+			expect(ready).toBe(true);
+			expect(app.ctx.direnv.statusFor(app.workspace).env.A).toBe("1");
+			listener.dispose();
+		} finally {
+			await app.dispose();
+		}
+	});
+
+	it("keeps the old snapshot readable until explicit reload finishes", async () => {
+		const rcPath = join(scratch(), ".envrc");
+		let value = "old";
+		const app = await boot({ rcPath, probe: () => exported({ A: value }) });
+		try {
+			await injectSessionContext(app.ctx, app.agent);
+			let release = () => {};
+			vi.mocked(Core.readNativeStatus).mockImplementation(
+				() =>
+					new Promise((resolve) => {
+						release = () => resolve({ path: rcPath, allowed: 0 });
+					}),
+			);
+			value = "new";
+			const reload = app.ctx.direnv.reload(app.workspace);
+			expect(app.ctx.direnv.forWorkspace(app.workspace).env.A).toBe("old");
+			release();
+			await reload;
+			expect(app.ctx.direnv.forWorkspace(app.workspace).env.A).toBe("new");
 		} finally {
 			await app.dispose();
 		}

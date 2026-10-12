@@ -15,8 +15,8 @@
  *   calling agent's own workspace by default.
  *
  * - `direnv_reload` re-resolves one workspace (or every cached workspace) now,
- *   which is the manual escape hatch for the per-workspace cache: use it after
- *   changing something direnv depends on that this plugin cannot see, or to
+ *   which explicitly replaces the saved workspace snapshot: use it after
+ *   changing files, dependencies, or external direnv authorization, or to
  *   confirm what a workspace currently injects. It needs no approval — it only
  *   reads, never authorizes.
  *
@@ -179,12 +179,10 @@ export function apply(ctx: Context): void {
 						detail: `dsh-direnv: the user approved, but direnv refused the write: ${approved.reason}`,
 					};
 				}
-				// Report the directory the approval actually affects — the RC's own — not
-				// the session workspace, which is a different directory whenever a command
-				// runs in a nested package. Count only names that will be set: a `.envrc`'s
-				// `unset` is not an injected variable.
-				const approvedDir = dirname(path);
-				const after = await ctx.direnv.statusFor(approvedDir);
+				// This explicit approval refreshes the fixed session workspace as well.
+				const approvedDir = workspace ?? dirname(path);
+				await ctx.direnv.reload(approvedDir);
+				const after = ctx.direnv.statusFor(approvedDir);
 				const variables = envNames(after.env).length;
 				return {
 					outcome: "approved" as const,
@@ -195,7 +193,7 @@ export function apply(ctx: Context): void {
 						`The next command in this workspace receives ${variables} injected variable${variables === 1 ? "" : "s"}.`,
 						...(after.kind === "injected"
 							? []
-							: [`Current state: ${await ctx.direnv.describe(approvedDir)}.`]),
+							: [`Current state: ${ctx.direnv.describe(approvedDir)}.`]),
 					].join(" "),
 				};
 			},
@@ -222,7 +220,7 @@ export function apply(ctx: Context): void {
 			name: "direnv_reload",
 			description: [
 				"Re-resolve a workspace direnv environment now and report its current set/unset changes.",
-				"Use it after changing something direnv cannot observe, or to confirm what a workspace injects; the normal cache refreshes itself, and omitting directory refreshes every resolved workspace.",
+				"Use it after changing workspace files, dependencies, or direnv authorization. Commands only read the last resolved snapshot. Omitting directory selects the current session workspace.",
 				"Reads only: it never approves a file.",
 			].join(" "),
 			parameters: {
@@ -258,15 +256,6 @@ export function apply(ctx: Context): void {
 					};
 				}
 				const report = await ctx.direnv.reload(target);
-				if (report.reloaded === 0) {
-					return {
-						reloaded: 0,
-						detail:
-							requested === undefined
-								? "dsh-direnv: nothing was cached yet, so the next command resolves this workspace fresh."
-								: `dsh-direnv: ${String(requested)} is not cached; the next command resolves it fresh.`,
-					};
-				}
 				const lines = report.changed.map((change) => {
 					const where =
 						change.rcPath === undefined ? change.directory : change.rcPath;

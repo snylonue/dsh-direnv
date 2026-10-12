@@ -24,7 +24,6 @@ import {
 	refuseAllow,
 	selectInjectable,
 	hasAppliedEntries,
-	cacheStamp,
 	defaultConfig,
 } from "../src/core.js";
 import DirenvService from "../src/provider.js";
@@ -248,49 +247,6 @@ describe("hasAppliedEntries", () => {
 		).toBe(false);
 		expect(hasAppliedEntries({ DIRENV_DIFF: "x", REAL: "1" })).toBe(true);
 		expect(hasAppliedEntries({})).toBe(false);
-	});
-});
-
-describe("cacheStamp", () => {
-	it("changes when the RC file changes", () => {
-		const dir = scratch();
-		const rc = join(dir, ".envrc");
-		writeFileSync(rc, "export A=1\n");
-		const first = cacheStamp(rc);
-		writeFileSync(rc, "export A=22\n");
-		expect(cacheStamp(rc)).not.toBe(first);
-	});
-
-	it("changes when the direnv allow store appears or is rewritten", () => {
-		const dir = scratch();
-		const data = join(dir, "data");
-		const rc = join(dir, ".envrc");
-		mkdirSync(data, { recursive: true });
-		writeFileSync(rc, "export A=1\n");
-		const env = { ...process.env, XDG_DATA_HOME: data };
-		const absent = cacheStamp(rc, env);
-		// Creating the store is what an external `direnv allow` does.
-		mkdirSync(join(data, "direnv", "allow"), { recursive: true });
-		expect(cacheStamp(rc, env)).not.toBe(absent);
-	});
-
-	it("is stable when nothing changes", () => {
-		const dir = scratch();
-		const rc = join(dir, ".envrc");
-		writeFileSync(rc, "export A=1\n");
-		expect(cacheStamp(rc)).toBe(cacheStamp(rc));
-	});
-
-	it("distinguishes a missing RC from a present one", () => {
-		const dir = scratch();
-		const rc = join(dir, ".envrc");
-		const missing = cacheStamp(rc);
-		writeFileSync(rc, "export A=1\n");
-		expect(cacheStamp(rc)).not.toBe(missing);
-	});
-
-	it("handles an undefined RC, meaning no .envrc governs the directory", () => {
-		expect(typeof cacheStamp(undefined)).toBe("string");
 	});
 });
 

@@ -177,12 +177,7 @@ export function installDirenvShellAdapter(
 			const workspace = ctx.direnv.workspaceFor(agent);
 			if (workspace === undefined) return next();
 
-			// Match native direnv: the command's own directory selects the .envrc, so
-			// a monorepo package gets its own environment instead of silently
-			// inheriting the repository root's. `probeDirectory` falls back to the
-			// workspace whenever the spec's workdir is absent or not a real directory.
-			const probeDir = ctx.direnv.probeDirectory(workspace, spec.workdir);
-			const { env, status, notice } = await ctx.direnv.forWorkspace(probeDir);
+			const { env, status, notice } = ctx.direnv.forWorkspace(workspace);
 			if (status.kind === "no-rc" || status.kind === "disabled") return next();
 
 			// `undefined` values are the seam's removal convention and must survive the

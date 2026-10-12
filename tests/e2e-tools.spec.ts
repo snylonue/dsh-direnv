@@ -4,6 +4,7 @@
  *
  * @module tests/e2e-tools
  */
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -81,6 +82,7 @@ describeReal("end to end through the tool registry", () => {
 		fibers.push(await ctx.plugin(FakeAgents));
 		fibers.push(await ctx.plugin(FakeApproval));
 		fibers.push(await ctx.plugin(DirenvService, { ...defaultConfig }));
+		await ctx.direnv.reload(ws);
 		const adapter = installDirenvShellAdapter(ctx);
 		fibers.push(await ctx.plugin(ToolBash, {}));
 		fibers.push(await ctx.plugin(DirenvTools));
@@ -127,6 +129,21 @@ describeReal("end to end through the tool registry", () => {
 			const reloadText = JSON.stringify(reloaded);
 			expect(reloadText).toContain("injected");
 			expect(reloadText).toContain("1");
+
+			// External edits/approval leave the child environment unchanged until reload.
+			writeFileSync(rc, "export TOOLCHAIN=updated\n");
+			const externalAllow = spawnSync("direnv", ["allow", rc], {
+				env: process.env,
+			});
+			expect(externalAllow.status).toBe(0);
+			const read = () =>
+				call("bash", {
+					command: 'printf "%s" "$TOOLCHAIN"',
+					description: "read toolchain",
+				});
+			expect(JSON.stringify(await read())).toContain("ready");
+			await call("direnv_reload", {});
+			expect(JSON.stringify(await read())).toContain("updated");
 		} finally {
 			adapter.dispose();
 			for (const f of fibers.reverse()) await f.dispose();

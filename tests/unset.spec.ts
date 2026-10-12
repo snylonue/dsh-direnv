@@ -65,6 +65,7 @@ describeReal("unset semantics against a real child", () => {
 		fibers.push(await ctx.plugin(BashLocal, { cwd: ws }));
 		fibers.push(await ctx.plugin(FakeAgents));
 		fibers.push(await ctx.plugin(DirenvService, { ...defaultConfig }));
+		await ctx.direnv.reload(ws);
 		const adapter = installDirenvShellAdapter(ctx);
 		currentAgent = { session: { header: { cwd: ws } } };
 		try {

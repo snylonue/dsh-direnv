@@ -93,6 +93,7 @@ describeReal("acceptance: unapproved -> approve -> injected", () => {
 		fibers.push(await ctx.plugin(FakeAgents));
 		fibers.push(await ctx.plugin(FakeApproval));
 		fibers.push(await ctx.plugin(DirenvService, { ...defaultConfig }));
+		await ctx.direnv.reload(workspace);
 		const adapter = installDirenvShellAdapter(ctx);
 		fibers.push(await ctx.plugin(ToolBash, {}));
 		fibers.push(await ctx.plugin(AllowTool));

@@ -17,8 +17,6 @@
         notifyOnBlocked: true
         sessionContext: true
         restrictAllowToWorkspace: true
-        followWorkdir: true
-        cache: true
     - id: direnv-integration
       name: "@snylonue/dsh-direnv/integration-plugin"
     - id: direnv-tools
