@@ -53,15 +53,10 @@ export async function injectSessionContext(
 		const workspace = ctx.direnv.workspaceFor(agent);
 		if (workspace === undefined) return;
 
-		// No command workdir exists at session start, so the workspace root is the
-		// directory that selects the .envrc — exactly what `followWorkdir` resolves
-		// a command with no workdir to.
-		const probeDir = ctx.direnv.probeDirectory(workspace, undefined);
-
 		// Resolving answers the context AND warms the per-directory cache, so the
 		// session's first command reuses this probe.
-		const status = await ctx.direnv.statusFor(probeDir);
-		const text = sessionContextText(status, probeDir);
+		const status = await ctx.direnv.statusFor(workspace);
+		const text = sessionContextText(status, workspace);
 		if (text === undefined) return;
 
 		agent.inject(
@@ -96,7 +91,7 @@ export async function injectSessionContext(
  * for fresh creation, resume, clear, and compaction alike.
  *
  * The listener is registered on `ctx` and therefore disposed with the calling
- * fiber even without an explicit {@link DirenvSessionContextHandle.dispose}.
+ * fiber even without an explicit {@link DirenvSessionContextHandle | dispose()}.
  *
  * @param ctx - composition context to listen on and resolve through.
  * @returns the handle that removes the listener.

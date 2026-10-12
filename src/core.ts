@@ -289,7 +289,8 @@ export async function readNativeStatus(
 export type DiffEntry = string | null;
 
 /**
- * An environment map for one execution.
+ * A direnv environment patch for one execution, not the host `process.env`.
+ * Strings set variables; `undefined` removes them; omitted names are unchanged.
  *
  * The shell seam's declared type is `Record<string, string>`, but the
  * subprocess layer that consumes it removes every entry whose value is
@@ -298,6 +299,14 @@ export type DiffEntry = string | null;
  * here and narrowed again at the seam boundary.
  */
 export type InjectableEnv = Record<string, string | undefined>;
+
+/** The variable names in one injectable map, ignoring removal entries. */
+export function envNames(env: InjectableEnv): string[] {
+	return Object.entries(env)
+		.filter(([, value]) => value !== undefined)
+		.map(([name]) => name)
+		.sort();
+}
 
 /**
  * Parse one `direnv export json` stdout into a diff. Returns `undefined` for
@@ -556,10 +565,7 @@ export function sessionContextText(
 		case "injected": {
 			// Count only names that will be SET; a `.envrc`'s `unset` is not an
 			// injected variable and must not inflate the list or its count.
-			const names = Object.entries(status.env)
-				.filter(([, value]) => value !== undefined)
-				.map(([name]) => name)
-				.sort();
+			const names = envNames(status.env);
 			const shown = names.slice(0, SESSION_CONTEXT_MAX_NAMES);
 			const hidden = names.length - shown.length;
 			const list =

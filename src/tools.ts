@@ -26,7 +26,7 @@ import { dirname } from "node:path";
 import type { Context } from "@deepseek-ai/cordis";
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import z from "@deepseek-ai/schemastery";
-import { envNames } from "./provider.js";
+import { envNames } from "./core.js";
 
 export const name = "direnv-tools";
 

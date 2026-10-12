@@ -31,6 +31,7 @@ import {
 	cacheStamp,
 	defaultConfig,
 	describeStatus,
+	envNames,
 	readNativeStatus,
 	isExistingDirectory,
 	isAbsolutePath,
@@ -54,15 +55,7 @@ export type {
 	DirenvStatus,
 	InjectableEnv,
 } from "./core.js";
-export { defaultConfig } from "./core.js";
-
-/** The variable names in one injectable map, ignoring removal entries. */
-export function envNames(env: InjectableEnv): string[] {
-	return Object.entries(env)
-		.filter(([, value]) => value !== undefined)
-		.map(([name]) => name)
-		.sort();
-}
+export { defaultConfig, envNames } from "./core.js";
 
 /** One directory's outcome after a reload. */
 export interface ReloadChange {
@@ -137,7 +130,7 @@ export default class DirenvService extends Service {
 	 * makes every adapter pass its call through untouched.
 	 */
 	workspaceFor(agent: Agent): string | undefined {
-		const cwd = agent.session?.header.cwd;
+		const cwd = agent.session.header.cwd;
 		if (!isAbsolutePath(cwd)) return undefined;
 		return resolvePath(cwd);
 	}
