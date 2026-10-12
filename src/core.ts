@@ -132,28 +132,12 @@ export interface DirenvStatus {
 	detail?: string;
 }
 
-function isNonEmptyString(value: unknown): value is string {
-	return typeof value === "string" && value.length > 0;
-}
-
 function isNulFreeString(value: unknown): value is string {
 	return typeof value === "string" && !value.includes("\0");
 }
 
 function isInteger(value: unknown): value is number {
 	return typeof value === "number" && Number.isInteger(value);
-}
-
-/** Validate the semantic config invariants the schema cannot express. */
-export function assertDirenvConfig(config: DirenvConfig): void {
-	if (
-		!isNonEmptyString(config.executable) ||
-		!isNulFreeString(config.executable) ||
-		!isInteger(config.probeTimeoutMs) ||
-		config.probeTimeoutMs <= 0
-	) {
-		throw new TypeError("invalid direnv config");
-	}
 }
 
 export function isAbsolutePath(value: unknown): value is string {
@@ -193,15 +177,10 @@ export function cacheStamp(
 			parts.push("missing");
 		}
 	}
-	const dataHome =
-		env.XDG_DATA_HOME !== undefined && env.XDG_DATA_HOME.length > 0
-			? env.XDG_DATA_HOME
-			: env.HOME !== undefined && env.HOME.length > 0
-				? join(env.HOME, ".local", "share")
-				: undefined;
-	if (dataHome !== undefined) {
+	const storeDir = direnvStoreDir(env);
+	if (storeDir !== undefined) {
 		for (const store of ["allow", "deny"]) {
-			const dir = join(dataHome, "direnv", store);
+			const dir = join(storeDir, store);
 			try {
 				parts.push(`${dir}:${String(statSync(dir).mtimeMs)}`);
 			} catch {

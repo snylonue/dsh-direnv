@@ -167,7 +167,6 @@ export function installDirenvShellAdapter(
 		ctx.shell,
 		"execute",
 		async (next, _thisArg, [spec]) => {
-			if (spec === undefined || typeof spec.command !== "string") return next();
 			if (!ctx.direnv.enabled) return next();
 
 			// currentInitiator() throws once the agents service is disposed; Cordis

@@ -25,9 +25,9 @@ import {
 	selectInjectable,
 	hasAppliedEntries,
 	cacheStamp,
-	assertDirenvConfig,
 	defaultConfig,
 } from "../src/core.js";
+import DirenvService from "../src/provider.js";
 
 vi.mock("node:fs", async (importOriginal) => ({
 	...(await importOriginal<typeof import("node:fs")>()),
@@ -388,28 +388,40 @@ describe("isWithin", () => {
 	});
 });
 
-describe("assertDirenvConfig", () => {
-	it("accepts the defaults", () => {
-		expect(() => assertDirenvConfig(defaultConfig)).not.toThrow();
+describe("DirenvService.Config", () => {
+	it("accepts the defaults and supplies omitted defaults", () => {
+		expect(DirenvService.Config(defaultConfig)).toEqual(defaultConfig);
+		expect(DirenvService.Config()).toEqual(defaultConfig);
 	});
 
-	it("rejects invalid executable strings with a short fixed error", () => {
-		for (const executable of ["", "direnv\0"])
+	it("accepts non-empty executable names and paths", () => {
+		for (const executable of ["direnv", "/usr/bin/direnv"]) {
+			expect(
+				DirenvService.Config({ ...defaultConfig, executable }).executable,
+			).toBe(executable);
+		}
+	});
+
+	it("rejects empty or NUL-containing executable strings", () => {
+		for (const executable of ["", "direnv\0", "\0direnv", "direnv\0\n"]) {
 			expect(() =>
-				assertDirenvConfig({ ...defaultConfig, executable }),
-			).toThrow("invalid direnv config");
+				DirenvService.Config({ ...defaultConfig, executable }),
+			).toThrow();
+		}
 	});
 
-	it("rejects non-positive, fractional, and non-finite timeouts", () => {
+	it("rejects non-positive, fractional, non-finite, and over-limit timeouts", () => {
 		for (const probeTimeoutMs of [
 			0,
 			-1,
 			1.5,
 			Number.NaN,
 			Number.POSITIVE_INFINITY,
-		])
+			Number.NEGATIVE_INFINITY,
+			600_001,
+		]) {
 			expect(() =>
-				assertDirenvConfig({ ...defaultConfig, probeTimeoutMs }),
+				DirenvService.Config({ ...defaultConfig, probeTimeoutMs }),
 			).toThrow("invalid direnv config");
 	});
 });

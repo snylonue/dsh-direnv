@@ -254,7 +254,7 @@ export function apply(ctx: Context): void {
 					(workspace === undefined
 						? undefined
 						: ctx.direnv.probeDirectory(workspace, undefined));
-				if (requested === undefined && target === undefined) {
+				if (target === undefined) {
 					return {
 						reloaded: 0,
 						detail:

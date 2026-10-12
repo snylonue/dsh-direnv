@@ -26,7 +26,6 @@ import { Service, type Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import z from "@deepseek-ai/schemastery";
 import {
-	assertDirenvConfig,
 	blockedNotice,
 	cacheStamp,
 	defaultConfig,
@@ -83,7 +82,10 @@ export interface ReloadReport {
 
 export default class DirenvService extends Service {
 	static Config = z.object({
-		executable: z.string().default(defaultConfig.executable),
+		executable: z
+			.string()
+			.pattern(/^[^\0]+$/)
+			.default(defaultConfig.executable),
 		enabled: z.boolean().default(defaultConfig.enabled),
 		probeTimeoutMs: z
 			.natural()
@@ -111,7 +113,6 @@ export default class DirenvService extends Service {
 		private readonly config: DirenvConfig = defaultConfig,
 	) {
 		super(ctx, "direnv");
-		assertDirenvConfig(config);
 	}
 
 	/** Read-only projection of the `enabled` switch, read by the adapters per call. */
