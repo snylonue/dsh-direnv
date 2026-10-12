@@ -69,7 +69,7 @@ export const defaultConfig: DirenvConfig = {
 	executable: "direnv",
 	enabled: true,
 	probeTimeoutMs: 10_000,
-	notifyOnBlocked: true,
+	notifyOnBlocked: false,
 	sessionContext: true,
 };
 

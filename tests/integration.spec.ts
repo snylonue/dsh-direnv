@@ -425,7 +425,7 @@ describeReal("direnv injection (real direnv)", () => {
 	it("injects nothing for an unallowed .envrc, but reports the block actionably", async () => {
 		const box = sandbox();
 		writeRc(box, ".", "export SHOULD_NOT_APPEAR=1\n", false);
-		const app = await boot(box);
+		const app = await boot(box, { notifyOnBlocked: true });
 		try {
 			const result = await (
 				await app.ctx.shell.execute(app.shell.resolve({ command: "true" }))
@@ -440,10 +440,10 @@ describeReal("direnv injection (real direnv)", () => {
 		}
 	});
 
-	it("stays silent about a block when notifyOnBlocked is off", async () => {
+	it("stays silent about a block by default", async () => {
 		const box = sandbox();
 		writeRc(box, ".", "export X=1\n", false);
-		const app = await boot(box, { notifyOnBlocked: false });
+		const app = await boot(box);
 		try {
 			const result = await (
 				await app.ctx.shell.execute(app.shell.resolve({ command: "true" }))
@@ -512,7 +512,7 @@ describeReal("direnv injection (real direnv)", () => {
 	it("checks changed content and external authorization on explicit reload", async () => {
 		const box = sandbox();
 		const rc = writeRc(box, ".", "export V=v1\n");
-		const app = await boot(box);
+		const app = await boot(box, { notifyOnBlocked: true });
 		try {
 			await app.shell.run(app.shell.resolve({ command: "true" }));
 			expect(app.shell.last().env?.V).toBe("v1");
@@ -678,7 +678,7 @@ describeReal("direnv injection (real direnv)", () => {
 	it("treats an empty allowed .envrc as no injection and no notice", async () => {
 		const box = sandbox();
 		writeRc(box, ".", "");
-		const app = await boot(box);
+		const app = await boot(box, { notifyOnBlocked: true });
 		try {
 			const result = await (
 				await app.ctx.shell.execute(app.shell.resolve({ command: "true" }))
@@ -693,7 +693,7 @@ describeReal("direnv injection (real direnv)", () => {
 	it("appends nothing to a healthy background process", async () => {
 		const box = sandbox();
 		writeRc(box, ".", "export X=1\n");
-		const app = await boot(box);
+		const app = await boot(box, { notifyOnBlocked: true });
 		try {
 			const proc = await app.ctx.shell.execute(
 				app.shell.resolve({ command: "true" }),
@@ -708,7 +708,7 @@ describeReal("direnv injection (real direnv)", () => {
 	it("appends the notice to the first background read only", async () => {
 		const box = sandbox();
 		writeRc(box, ".", "export X=1\n", false);
-		const app = await boot(box);
+		const app = await boot(box, { notifyOnBlocked: true });
 		try {
 			const proc = await app.ctx.shell.execute(
 				app.shell.resolve({ command: "true" }),
@@ -723,7 +723,7 @@ describeReal("direnv injection (real direnv)", () => {
 	it("surfaces the notice on the observed stderr the job registry pumps", async () => {
 		const box = sandbox();
 		writeRc(box, ".", "export X=1\n", false);
-		const app = await boot(box);
+		const app = await boot(box, { notifyOnBlocked: true });
 		try {
 			const proc = await app.ctx.shell.execute(
 				app.shell.resolve({ command: "true" }),
@@ -749,7 +749,7 @@ describeReal("direnv injection (real direnv)", () => {
 			stdout: "not json",
 			stderr: "",
 		});
-		const app = await boot(box, {}, probe);
+		const app = await boot(box, { notifyOnBlocked: true }, probe);
 		try {
 			const result = await (
 				await app.ctx.shell.execute(app.ctx.shell.resolve({ command: "true" }))
@@ -764,7 +764,7 @@ describeReal("direnv injection (real direnv)", () => {
 	it("reports a direnv timeout as an error instead of injecting", async () => {
 		const box = sandbox();
 		writeRc(box, ".", "sleep 1\nexport X=1\n");
-		const app = await boot(box, { probeTimeoutMs: 100 });
+		const app = await boot(box, { probeTimeoutMs: 100, notifyOnBlocked: true });
 		try {
 			const result = await (
 				await app.ctx.shell.execute(app.ctx.shell.resolve({ command: "true" }))
@@ -785,7 +785,10 @@ describeReal("direnv injection (real direnv)", () => {
 			undefined,
 		);
 		// With the real runner, the missing executable is what produces the error.
-		const app2 = await boot(box, { executable: "/nonexistent/direnv" });
+		const app2 = await boot(box, {
+			executable: "/nonexistent/direnv",
+			notifyOnBlocked: true,
+		});
 		void app;
 		try {
 			const result = await (

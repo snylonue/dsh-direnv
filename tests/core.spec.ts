@@ -240,6 +240,7 @@ describe("DirenvService.Config", () => {
 	it("accepts the defaults and supplies omitted defaults", () => {
 		expect(DirenvService.Config(defaultConfig)).toEqual(defaultConfig);
 		expect(DirenvService.Config()).toEqual(defaultConfig);
+		expect(DirenvService.Config().notifyOnBlocked).toBe(false);
 	});
 
 	it("accepts non-empty executable names and paths", () => {

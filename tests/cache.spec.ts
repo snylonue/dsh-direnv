@@ -156,7 +156,7 @@ describeReal("workspace snapshots", () => {
 	it("does not lazily resolve an unknown workspace", async () => {
 		const box = sandbox();
 		writeRc(box, "export V=1\n");
-		const app = await boot(box);
+		const app = await boot(box, { notifyOnBlocked: true });
 		try {
 			expect(app.service.statusFor(box.ws)).toMatchObject({
 				kind: "error",

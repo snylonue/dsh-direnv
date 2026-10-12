@@ -81,7 +81,12 @@ describeReal("end to end through the tool registry", () => {
 		fibers.push(await ctx.plugin(SystemPrompt, {}));
 		fibers.push(await ctx.plugin(FakeAgents));
 		fibers.push(await ctx.plugin(FakeApproval));
-		fibers.push(await ctx.plugin(DirenvService, { ...defaultConfig }));
+		fibers.push(
+			await ctx.plugin(DirenvService, {
+				...defaultConfig,
+				notifyOnBlocked: true,
+			}),
+		);
 		await ctx.direnv.reload(ws);
 		const adapter = installDirenvShellAdapter(ctx);
 		fibers.push(await ctx.plugin(ToolBash, {}));

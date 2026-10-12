@@ -21,7 +21,10 @@ import * as ShellEnv from "@deepseek-ai/dsh-shell-env";
 import * as ToolBash from "@deepseek-ai/dsh-tool-bash";
 import ToolRuntime from "@deepseek-ai/dsh-tools";
 import SystemPrompt from "@deepseek-ai/dsh-system-prompt";
-import DirenvService, { defaultConfig } from "../src/provider.js";
+import DirenvService, {
+	defaultConfig,
+	type DirenvConfig,
+} from "../src/provider.js";
 import { installDirenvShellAdapter } from "../src/shell-adapter.js";
 import { requireRealProcesses } from "./helpers.js";
 import * as AllowTool from "../src/tools.js";
@@ -78,7 +81,7 @@ class FakeApproval extends Service {
 }
 
 /** Boot the real executor stack plus this plugin. */
-async function boot(box: Sandbox) {
+async function boot(box: Sandbox, overrides: Partial<DirenvConfig> = {}) {
 	const ctx = new Context();
 	const fibers = [] as Array<{ dispose(): Promise<void> }>;
 	fibers.push(await ctx.plugin(SubprocessLocal));
@@ -88,7 +91,9 @@ async function boot(box: Sandbox) {
 	fibers.push(await ctx.plugin(SystemPrompt, {}));
 	fibers.push(await ctx.plugin(FakeAgents));
 	fibers.push(await ctx.plugin(FakeApproval));
-	fibers.push(await ctx.plugin(DirenvService, { ...defaultConfig }));
+	fibers.push(
+		await ctx.plugin(DirenvService, { ...defaultConfig, ...overrides }),
+	);
 	await ctx.direnv.reload(box.workspace);
 	const adapter = installDirenvShellAdapter(ctx);
 	fibers.push(await ctx.plugin(ToolBash, {}));
@@ -169,7 +174,7 @@ describeReal(
 				XDG_CONFIG_HOME: box.config,
 				XDG_CACHE_HOME: box.cache,
 			});
-			const app = await boot(box);
+			const app = await boot(box, { notifyOnBlocked: true });
 			try {
 				const result = await bash(app, `printf "[%s]" "\${SECRET_VAR-unset}"`);
 				expect(result.stdout.text).toBe("[unset]");

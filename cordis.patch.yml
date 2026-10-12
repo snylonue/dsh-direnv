@@ -14,7 +14,7 @@
         executable: direnv
         enabled: true
         probeTimeoutMs: 10000
-        notifyOnBlocked: true
+        notifyOnBlocked: false
         sessionContext: true
     - id: direnv-integration
       name: "@snylonue/dsh-direnv/integration-plugin"
