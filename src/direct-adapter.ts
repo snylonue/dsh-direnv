@@ -6,30 +6,35 @@
  * workspace has a usable direnv environment, the original method receives the
  * merged environment. No consumer-side preparation hook is required.
  */
-import { Duplex, PassThrough } from "node:stream";
+import { Duplex, PassThrough, type Readable } from "node:stream";
 import type { Context } from "@deepseek-ai/cordis";
 import type {
 	SubprocessHandle,
+	SubprocessOutputReader,
 	SubprocessSpawnSpec,
-	SubprocessTerminalSpawnSpec,
+	SubprocessRuntime,
 } from "@deepseek-ai/dsh-subprocess";
-
-type ResolveExecutable = (
-	command: string,
-	env?: Readonly<Record<string, string>>,
-	signal?: AbortSignal,
-) => Promise<string>;
-type Spawn = (spec: SubprocessSpawnSpec) => SubprocessHandle;
-type SpawnTerminal = (spec: SubprocessTerminalSpawnSpec) => Promise<unknown>;
-
-interface DirectSubprocess {
-	resolveExecutable?: ResolveExecutable;
-	spawn?: Spawn;
-	spawnTerminal?: SpawnTerminal;
-}
 
 function emptyRead(fromByte: number) {
 	return { text: "", nextOffset: fromByte, lossy: false };
+}
+
+function connectOutput(
+	source: Readable | undefined,
+	proxy: PassThrough | undefined,
+) {
+	if (proxy === undefined) return;
+	if (source === undefined) proxy.end();
+	else source.pipe(proxy);
+}
+
+function deferredOutputReader(
+	getReader: () => SubprocessOutputReader | undefined,
+): SubprocessOutputReader {
+	return {
+		readFrom: (fromByte) =>
+			getReader()?.readFrom(fromByte) ?? emptyRead(fromByte),
+	};
 }
 
 /** Keep the synchronous subprocess handle contract while delaying the provider spawn. */
@@ -75,14 +80,8 @@ function deferredHandle(
 			if (handle.stdin === undefined) stdin.end();
 			else stdin.pipe(handle.stdin);
 		}
-		if (stdout !== undefined) {
-			if (handle.stdout === undefined) stdout.end();
-			else handle.stdout.pipe(stdout);
-		}
-		if (stderr !== undefined) {
-			if (handle.stderr === undefined) stderr.end();
-			else handle.stderr.pipe(stderr);
-		}
+		connectOutput(handle.stdout, stdout);
+		connectOutput(handle.stderr, stderr);
 		if (control !== undefined) {
 			if (handle.control === undefined) control.end();
 			else {
@@ -94,32 +93,19 @@ function deferredHandle(
 	};
 
 	const fail = (error: unknown) => {
-		stdin?.destroy(error as Error);
-		stdout?.destroy(error as Error);
-		stderr?.destroy(error as Error);
-		control?.destroy(error as Error);
+		for (const stream of [stdin, stdout, stderr, control]) {
+			stream?.destroy(error as Error);
+		}
 	};
 
 	void actualPromise.then(connect, fail);
 
 	const collected = {
 		...(typeof spec.stdio.stdout === "object"
-			? {
-					stdout: {
-						readFrom: (fromByte: number) =>
-							actual?.collected.stdout?.readFrom(fromByte) ??
-							emptyRead(fromByte),
-					},
-				}
+			? { stdout: deferredOutputReader(() => actual?.collected.stdout) }
 			: {}),
 		...(typeof spec.stdio.stderr === "object"
-			? {
-					stderr: {
-						readFrom: (fromByte: number) =>
-							actual?.collected.stderr?.readFrom(fromByte) ??
-							emptyRead(fromByte),
-					},
-				}
+			? { stderr: deferredOutputReader(() => actual?.collected.stderr) }
 			: {}),
 	};
 
@@ -140,27 +126,35 @@ function deferredHandle(
 	};
 }
 
-function restoreMethod(
-	target: DirectSubprocess,
-	name: "resolveExecutable" | "spawn" | "spawnTerminal",
-	original: unknown,
-	wrapped: unknown,
+/** String-only seams cannot represent environment removal entries. */
+function stringEnv(env: SubprocessSpawnSpec["env"]): Record<string, string> {
+	return Object.fromEntries(
+		Object.entries(env ?? {}).filter(
+			(entry): entry is [string, string] => entry[1] !== undefined,
+		),
+	);
+}
+
+function restoreMethod<
+	K extends "resolveExecutable" | "spawn" | "spawnTerminal",
+>(
+	target: SubprocessRuntime,
+	name: K,
+	original: SubprocessRuntime[K],
+	wrapped: SubprocessRuntime[K],
 ) {
 	if (target[name] !== wrapped) return;
-	if (original === undefined) delete target[name];
-	else (target as Record<string, unknown>)[name] = original;
+	target[name] = original;
 }
 
 /** Install dsh-direnv as a transparent adapter for session-workspace subprocess calls. */
 export function installDirenvDirectAdapter(ctx: Context): { dispose(): void } {
-	const target = ctx.subprocess as unknown as DirectSubprocess;
+	const target = ctx.subprocess;
 	const originalResolve = target.resolveExecutable;
 	const originalSpawn = target.spawn;
 	const originalSpawnTerminal = target.spawnTerminal;
 
-	const prepare = async (
-		explicitEnv: Record<string, string | undefined> | undefined,
-	) => {
+	const prepare = async (explicitEnv: SubprocessSpawnSpec["env"]) => {
 		if (!ctx.direnv.enabled) return explicitEnv;
 
 		const agent = ctx.agents.currentInitiator();
@@ -169,69 +163,41 @@ export function installDirenvDirectAdapter(ctx: Context): { dispose(): void } {
 		if (workspace === undefined) return explicitEnv;
 
 		// The adapter deliberately scopes direnv to the session workspace root.
-		const probeDir = ctx.direnv.probeDirectory(workspace, workspace);
-		const { env, status } = await ctx.direnv.forWorkspace(probeDir);
+		const { env, status } = await ctx.direnv.forWorkspace(workspace);
 		if (status.kind === "no-rc" || status.kind === "disabled")
 			return explicitEnv;
 
-		const merged = { ...env, ...explicitEnv };
-		return Object.keys(merged).length === 0 ? explicitEnv : merged;
+		return { ...env, ...explicitEnv };
 	};
 
-	let wrappedResolve: ResolveExecutable | undefined;
-	if (originalResolve !== undefined) {
-		wrappedResolve = async (command, env, signal) => {
-			const prepared = await prepare(
-				env === undefined ? undefined : { ...env },
-			);
-			const resolvedEnv =
-				prepared === undefined
-					? undefined
-					: (Object.fromEntries(
-							Object.entries(prepared).filter(
-								([, value]) => value !== undefined,
-							),
-						) as Record<string, string>);
-			return originalResolve.call(target, command, resolvedEnv, signal);
-		};
-		target.resolveExecutable = wrappedResolve;
-	}
+	const wrappedResolve: SubprocessRuntime["resolveExecutable"] = async (
+		command,
+		env,
+		signal,
+	) => {
+		const prepared = await prepare(env);
+		return originalResolve.call(target, command, stringEnv(prepared), signal);
+	};
+	target.resolveExecutable = wrappedResolve;
 
-	let wrappedSpawn: Spawn | undefined;
-	if (originalSpawn !== undefined) {
-		wrappedSpawn = (spec) => {
-			const actual = prepare(spec.env)
-				.catch(() => spec.env)
-				.then((env) =>
-					originalSpawn.call(target, {
-						...spec,
-						...(env === undefined ? {} : { env }),
-					}),
-				);
-			return deferredHandle(spec, actual);
-		};
-		target.spawn = wrappedSpawn;
-	}
+	const wrappedSpawn: SubprocessRuntime["spawn"] = (spec) => {
+		const actual = prepare(spec.env)
+			.catch(() => spec.env)
+			.then((env) => originalSpawn.call(target, { ...spec, env }));
+		return deferredHandle(spec, actual);
+	};
+	target.spawn = wrappedSpawn;
 
-	let wrappedSpawnTerminal: SpawnTerminal | undefined;
-	if (originalSpawnTerminal !== undefined) {
-		wrappedSpawnTerminal = async (spec) => {
-			const prepared = await prepare(spec.env);
-			const env =
-				prepared === undefined
-					? undefined
-					: (Object.fromEntries(
-							Object.entries(prepared).filter(
-								([, value]) => value !== undefined,
-							),
-						) as Record<string, string>);
-			return originalSpawnTerminal.call(target, {
-				...spec,
-				...(env === undefined ? {} : { env }),
-			});
-		};
-		target.spawnTerminal = wrappedSpawnTerminal;
-	}
+	const wrappedSpawnTerminal: SubprocessRuntime["spawnTerminal"] = async (
+		spec,
+	) => {
+		const prepared = await prepare(spec.env);
+		return originalSpawnTerminal.call(target, {
+			...spec,
+			env: stringEnv(prepared),
+		});
+	};
+	target.spawnTerminal = wrappedSpawnTerminal;
 
 	return {
 		dispose() {
