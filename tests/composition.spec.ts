@@ -68,6 +68,15 @@ class FakeAgents extends Service {
 	}
 }
 
+class FakeApproval extends Service {
+	constructor(ctx: Context) {
+		super(ctx, "approval");
+	}
+	request() {
+		return Promise.resolve("unavailable" as const);
+	}
+}
+
 /** Boot the real executor stack plus this plugin. */
 async function boot(box: Sandbox) {
 	const ctx = new Context();
@@ -78,6 +87,7 @@ async function boot(box: Sandbox) {
 	fibers.push(await ctx.plugin(ToolRuntime));
 	fibers.push(await ctx.plugin(SystemPrompt, {}));
 	fibers.push(await ctx.plugin(FakeAgents));
+	fibers.push(await ctx.plugin(FakeApproval));
 	fibers.push(await ctx.plugin(DirenvService, { ...defaultConfig }));
 	await ctx.direnv.reload(box.workspace);
 	const adapter = installDirenvShellAdapter(ctx);

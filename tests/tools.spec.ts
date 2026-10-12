@@ -11,7 +11,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Context, Service } from "@deepseek-ai/cordis";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import DirenvService, {
 	defaultConfig,
 	type DirenvConfig,
@@ -214,7 +214,8 @@ async function harness(
 	);
 	const toolFiber = await ctx.plugin(AllowTool);
 	const definition = capturedTool("direnv_allow");
-	if (definition === undefined) throw new Error("the tool did not register");
+	if (options.withApproval !== false && definition === undefined)
+		throw new Error("the tool did not register");
 
 	const agent: Caller = { session: { header: { cwd: workspace } } };
 	return {
@@ -223,6 +224,8 @@ async function harness(
 		workspace,
 		rcPath,
 		async call(args, opts = {}) {
+			if (definition === undefined)
+				throw new Error("direnv_allow is not registered");
 			const caller = "agent" in opts ? opts.agent : agent;
 			return definition.execute(args, {
 				callId: "call-1",
@@ -263,6 +266,13 @@ describe("direnv_allow registration", () => {
 });
 
 describe("approval gate", () => {
+	it("infers a typed optional approval lookup instead of any", () => {
+		const approval = new Context().get("approval");
+		expectTypeOf(approval).not.toBeAny();
+		expectTypeOf(approval).toEqualTypeOf<Context["approval"] | undefined>();
+		expect(approval).toBeUndefined();
+	});
+
 	it("asks the user exactly once with the tool identity, call id, and path", async () => {
 		const h = await harness();
 		try {
@@ -331,13 +341,12 @@ describe("approval gate", () => {
 		}
 	});
 
-	it("never approves when no approval service is composed", async () => {
+	it("registers only reload when no approval service is composed", async () => {
 		const h = await harness({ withApproval: false });
 		try {
-			const result = await h.call({ path: h.rcPath });
+			expect(capturedTool("direnv_allow")).toBeUndefined();
+			expect(capturedTool("direnv_reload")).toBeDefined();
 			expect(h.allowSpy).not.toHaveBeenCalled();
-			expect(result.outcome).toBe("unavailable");
-			expect(String(result.detail)).toContain("no approval channel");
 		} finally {
 			await h.dispose();
 		}

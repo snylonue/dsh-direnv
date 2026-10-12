@@ -48,7 +48,7 @@ class FakeAgents extends Service {
 	}
 }
 
-async function boot() {
+async function boot(withApproval = true) {
 	const workspace = scratch();
 	const rcPath = join(workspace, ".envrc");
 	writeFileSync(rcPath, "export DISPATCH_TEST=1\n");
@@ -61,7 +61,7 @@ async function boot() {
 	fibers.push(await ctx.plugin(ToolRuntime));
 	fibers.push(await ctx.plugin(SystemPrompt, {}));
 	fibers.push(await ctx.plugin(FakeAgents));
-	fibers.push(await ctx.plugin(FakeApproval));
+	if (withApproval) fibers.push(await ctx.plugin(FakeApproval));
 	fibers.push(await ctx.plugin(DirenvService, { ...defaultConfig }));
 	fibers.push(await ctx.plugin(AllowTool));
 	asked = [];
@@ -89,6 +89,25 @@ async function dispatch(app: { ctx: Context }, args: Record<string, unknown>) {
 }
 
 describe("direnv_allow through the real tool registry", () => {
+	it("registers allow only while approval is available, without affecting reload", async () => {
+		const app = await boot(false);
+		try {
+			const names = () => app.ctx.tools.schemas().map((schema) => schema.name);
+			expect(names()).toContain("direnv_reload");
+			expect(names()).not.toContain("direnv_allow");
+			const approval = await app.ctx.plugin(FakeApproval);
+			expect(names()).toContain("direnv_allow");
+			await approval.dispose();
+			expect(names()).not.toContain("direnv_allow");
+			expect(names()).toContain("direnv_reload");
+			const replacement = await app.ctx.plugin(FakeApproval);
+			expect(names().filter((name) => name === "direnv_allow")).toHaveLength(1);
+			await replacement.dispose();
+		} finally {
+			await app.dispose();
+		}
+	});
+
 	it("is advertised to the model with a path parameter", async () => {
 		const app = await boot();
 		try {
