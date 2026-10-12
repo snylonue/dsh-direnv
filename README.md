@@ -51,15 +51,18 @@ gains a notice the model can act on:
 ```text
 [dsh-direnv] This command ran WITHOUT the workspace direnv environment.
 [dsh-direnv] /home/me/proj/.envrc is not approved, so native direnv refused to load it.
-[dsh-direnv] Call the direnv_allow tool with this path to ask the user to approve it:
-[dsh-direnv]   direnv_allow path=/home/me/proj/.envrc
+[dsh-direnv] Call the direnv_allow tool to ask the user to approve this workspace:
+[dsh-direnv]   direnv_allow
 [dsh-direnv] Workspace: /home/me/proj
 ```
 
-The model then calls `direnv_allow`, which requests user approval for the path
-without reading or previewing the file contents. Only
+The model then calls `direnv_allow` (optionally with a `reason`), which requests
+user approval for the calling session workspace without reading or previewing
+the file contents. Only
 `allowed-once` proceeds; rejection, cancellation, and an unreachable answerer
-all refuse, and the file is written by the host's own `direnv allow`.
+all refuse. The host runs `direnv allow` without a path argument, with its cwd
+set to the fixed session workspace. File discovery (including parent-directory
+RC files), existence, and authorization errors are left entirely to direnv.
 
 `direnv allow` authorizes the file content at execution time: editing the `.envrc`
 afterwards invalidates it in direnv's own hash. The saved environment stays active
@@ -87,13 +90,11 @@ Use the model-facing tool explicitly to apply changes:
 
 ```text
 direnv_reload                          # reload the calling session workspace
-direnv_reload directory=/path/to/ws    # reload an explicit workspace
 ```
 
 Changing a command's working directory never changes its direnv environment.
-Reloading another workspace does not switch the current session to it.
 The service's argument-less `reload()` refreshes all previously resolved workspaces;
-the tool's omitted directory selects the calling session workspace.
+the tool has no parameters and refreshes only the calling session workspace.
 
 Reload reports names set/unset by the current filtered native direnv diff, not
 changes relative to the saved snapshot. Values are never included. Reload does
@@ -111,7 +112,6 @@ is replaced when resolution completes; subsequent commands use the new result.
     probeTimeoutMs: 10000       # budget for one direnv run
     notifyOnBlocked: true       # append the actionable notice to results
     sessionContext: true        # inject one model-facing snapshot at session start
-    restrictAllowToWorkspace: true  # direnv_allow may only name a file inside the agent's workspace
 ```
 
 | Field | Default | Meaning |
@@ -121,7 +121,6 @@ is replaced when resolution completes; subsequent commands use the new result.
 | `probeTimeoutMs` | `10000` | Each `direnv status --json` or `direnv export json` run is killed past this. |
 | `notifyOnBlocked` | `true` | Off keeps results byte-identical to an un-instrumented run. |
 | `sessionContext` | `true` | On, starting a session injects one model-facing snapshot naming the workspace's direnv variables (or why none loaded). Values are never included. |
-| `restrictAllowToWorkspace` | `true` | On, `direnv_allow` refuses any path outside the agent's workspace, including via `..` or a symlink. |
 
 ## Installation
 

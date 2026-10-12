@@ -12,8 +12,7 @@
  */
 import type { ExecFileException } from "node:child_process";
 import { execFileNoStdin } from "./process.js";
-import { basename, isAbsolute, join, resolve as resolvePath } from "node:path";
-import { realpathSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
 import { DSH_ENV_PREFIX } from "@deepseek-ai/dsh-shell";
 
 /** Environment variable names this plugin is willing to inject. */
@@ -27,9 +26,6 @@ export const SAFE_ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
  * harness fact to the model. Every such name is dropped from the injected diff.
  */
 export const MANAGED_ENV_PREFIX = DSH_ENV_PREFIX;
-
-/** Supported RC basenames for explicit approval requests. */
-export const RC_NAMES = [".envrc", ".env"] as const;
 
 /** The plugin name carried on the session-start context message and its section. */
 export const SESSION_CONTEXT_PLUGIN = "dsh-direnv";
@@ -66,12 +62,6 @@ export interface DirenvConfig {
 	 * direnv only from command notices.
 	 */
 	sessionContext: boolean;
-	/**
-	 * Whether `direnv_allow` may only approve a file inside the calling agent's
-	 * own workspace root. Turn off only when the model is trusted to request
-	 * arbitrary paths.
-	 */
-	restrictAllowToWorkspace: boolean;
 }
 
 /** The plan's defaults. */
@@ -81,7 +71,6 @@ export const defaultConfig: DirenvConfig = {
 	probeTimeoutMs: 10_000,
 	notifyOnBlocked: true,
 	sessionContext: true,
-	restrictAllowToWorkspace: true,
 };
 
 /** Why a workspace produced no injectable environment. */
@@ -423,8 +412,8 @@ export function blockedNotice(
 			"",
 			"[dsh-direnv] This command ran WITHOUT the workspace direnv environment.",
 			`[dsh-direnv] ${target} is not approved, so native direnv refused to load it.`,
-			"[dsh-direnv] Call the direnv_allow tool with this path to ask the user to approve it:",
-			`[dsh-direnv]   direnv_allow path=${target}`,
+			"[dsh-direnv] Call the direnv_allow tool to ask the user to approve this workspace:",
+			"[dsh-direnv]   direnv_allow",
 			`[dsh-direnv] Workspace: ${workspace}`,
 			"",
 		].join("\n");
@@ -485,7 +474,7 @@ export function sessionContextText(
 			const target = status.rcPath ?? "the workspace .envrc";
 			return [
 				`${prefix} The workspace direnv environment is NOT loaded: ${target} is not approved.`,
-				`Call the direnv_allow tool with this path to ask the user to approve it: direnv_allow path=${target}.`,
+				"Call the direnv_allow tool to ask the user to approve this workspace.",
 				`Workspace: ${workspace}.`,
 			].join("\n");
 		}
@@ -504,58 +493,4 @@ export function sessionContextText(
 				`Workspace: ${workspace}.`,
 			].join("\n");
 	}
-}
-
-/**
- * Canonicalize a path for containment checks: resolve symlinks when the path
- * exists, and fall back to lexical normalization when it does not.
- */
-function canonicalize(path: string): string {
-	try {
-		return realpathSync(path);
-	} catch {
-		return resolvePath(path);
-	}
-}
-
-/**
- * Whether `child` is inside `root` (or is `root`).
- *
- * Both sides are canonicalized first, so neither a `..` segment nor a symlink
- * can smuggle a path out of the workspace: a textual prefix check alone would
- * accept `/ws/../elsewhere/.envrc` and a symlinked `.envrc` pointing outside.
- */
-export function isWithin(root: string, child: string): boolean {
-	assertAbsolutePath(root);
-	assertAbsolutePath(child);
-	const realRoot = canonicalize(root);
-	const realChild = canonicalize(child);
-	if (realChild === realRoot) return true;
-	return realChild.startsWith(
-		realRoot.endsWith("/") ? realRoot : `${realRoot}/`,
-	);
-}
-
-/**
- * Enforce the tool's explicit-path and workspace policy before asking for consent.
- * File existence, file type, and authorization errors are left to direnv.
- * Returns a refusal reason, or `undefined` when these preconditions hold.
- */
-export function refuseAllow(
-	rcPath: string,
-	workspace: string | undefined,
-	restrict: boolean,
-): string | undefined {
-	if (!isAbsolutePath(rcPath)) return "invalid path";
-	if (!(RC_NAMES as readonly string[]).includes(basename(rcPath))) {
-		return `path must name one of ${RC_NAMES.join(", ")}: ${rcPath}`;
-	}
-	if (restrict) {
-		if (workspace === undefined)
-			return "this call has no workspace, so an absolute path cannot be approved";
-		if (!isWithin(workspace, rcPath)) {
-			return `path is outside the calling workspace (${workspace}): ${rcPath}`;
-		}
-	}
-	return undefined;
 }

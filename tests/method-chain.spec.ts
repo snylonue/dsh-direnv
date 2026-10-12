@@ -153,22 +153,22 @@ describe("installChainLink", () => {
 			expectTypeOf(name).toEqualTypeOf<string>();
 			expectTypeOf(receiver).toEqualTypeOf<Greeter>();
 			expectTypeOf(next()).toEqualTypeOf<string>();
-			if (false) {
+			expectTypeOf(() => {
 				// @ts-expect-error forwarding must respect the method argument type
 				next(123);
-			}
+			}).toBeFunction();
 			return next(name);
 		});
 		expect(target.greet("typed")).toBe("base(typed)");
 		link.dispose();
-		if (false) {
+		expectTypeOf(() => {
 			// @ts-expect-error a synchronous method cannot acquire an async wrapper
 			installChainLink(target, "greet", async (next) => next());
 			// @ts-expect-error wrappers must preserve the method return type
 			installChainLink(target, "greet", () => 123);
 			// @ts-expect-error non-function properties cannot be wrapped
 			installChainLink({ value: 42 }, "value", () => 42);
-		}
+		}).toBeFunction();
 	});
 
 	it("keeps replaced arguments when an inner link calls next()", () => {

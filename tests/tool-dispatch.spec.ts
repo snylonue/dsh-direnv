@@ -5,7 +5,7 @@
  *
  * @module tests/tool-dispatch
  */
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Context, Service } from "@deepseek-ai/cordis";
@@ -108,7 +108,7 @@ describe("direnv_allow through the real tool registry", () => {
 		}
 	});
 
-	it("is advertised to the model with a path parameter", async () => {
+	it("is advertised to the model with only optional reason", async () => {
 		const app = await boot();
 		try {
 			const schema = app.ctx.tools
@@ -120,10 +120,8 @@ describe("direnv_allow through the real tool registry", () => {
 				properties: Record<string, unknown>;
 				required: string[];
 			};
-			expect(Object.keys(params.properties)).toEqual(
-				expect.arrayContaining(["path", "reason"]),
-			);
-			expect(params.required).toEqual(["path"]);
+			expect(Object.keys(params.properties)).toEqual(["reason"]);
+			expect(params.required ?? []).toEqual([]);
 		} finally {
 			await app.dispose();
 		}
@@ -133,11 +131,10 @@ describe("direnv_allow through the real tool registry", () => {
 		const app = await boot();
 		try {
 			const result = await dispatch(app, {
-				path: app.rcPath,
 				reason: "needed for the build",
 			});
 			expect(asked).toHaveLength(1);
-			expect(asked[0]).toContain(app.rcPath);
+			expect(asked[0]).toContain(app.workspace);
 			expect(asked[0]).toContain("needed for the build");
 			expect(JSON.stringify(result)).toContain("approved");
 		} finally {
@@ -149,21 +146,26 @@ describe("direnv_allow through the real tool registry", () => {
 		const app = await boot();
 		try {
 			answer = "rejected";
-			const result = await dispatch(app, { path: app.rcPath });
+			const result = await dispatch(app, {});
 			expect(JSON.stringify(result)).toContain("rejected");
 		} finally {
 			await app.dispose();
 		}
 	});
 
-	it("refuses a path outside the workspace without asking", async () => {
+	it("allows native parent RC discovery after user consent", async () => {
 		const app = await boot();
 		try {
 			const outside = scratch();
 			const other = join(outside, ".envrc");
 			writeFileSync(other, "export X=1\n");
-			await dispatch(app, { path: other });
-			expect(asked).toHaveLength(0);
+			const nested = join(outside, "workspace");
+			mkdirSync(nested);
+			currentAgent = { session: { header: { cwd: nested } } };
+			const result = await dispatch(app, {});
+			expect(asked).toHaveLength(1);
+			expect(asked[0]).toContain(nested);
+			expect(JSON.stringify(result)).toContain("approved");
 		} finally {
 			await app.dispose();
 		}

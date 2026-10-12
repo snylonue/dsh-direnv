@@ -111,7 +111,6 @@ describeReal("end to end through the tool registry", () => {
 
 			// 2) Approve through the model-facing tool; the REAL direnv writes it.
 			const approved = await call("direnv_allow", {
-				path: rc,
 				reason: "the build needs it",
 			});
 			expect(asked).toBe(1);

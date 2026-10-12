@@ -120,7 +120,7 @@ describeReal("acceptance: unapproved -> approve -> injected", () => {
 			const allowResult = await ctx.tools.execute({
 				callId: "call-accept-1",
 				name: "direnv_allow",
-				arguments: { path: rcPath, reason: "the project toolchain is needed" },
+				arguments: { reason: "the project toolchain is needed" },
 				agent: currentAgent,
 				signal: new AbortController().signal,
 			} as never);

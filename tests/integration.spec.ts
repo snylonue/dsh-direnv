@@ -359,10 +359,7 @@ describeReal("direnv injection (real direnv)", () => {
 		const box = sandbox();
 		const app = await boot(box);
 		try {
-			const result = await app.ctx.direnv.approve(
-				join(box.workspace, ".envrc"),
-				box.workspace,
-			);
+			const result = await app.ctx.direnv.approve(box.workspace);
 			expect(result.ok).toBe(false);
 			if (result.ok) throw new Error("direnv allowed a missing file");
 			expect(result.reason).toContain("direnv allow exited with code");

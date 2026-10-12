@@ -202,7 +202,7 @@ describeReal(
 				const parameters = schema?.parameters as {
 					properties: Record<string, unknown>;
 				};
-				expect(Object.keys(parameters.properties)).toContain("path");
+				expect(Object.keys(parameters.properties)).toEqual(["reason"]);
 			} finally {
 				await app.dispose();
 				process.env = previous;

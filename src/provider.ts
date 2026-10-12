@@ -29,7 +29,6 @@ import {
 	envNames,
 	readNativeStatus,
 	isAbsolutePath,
-	refuseAllow,
 	resolveStatus,
 	type DirenvConfig,
 	type DirenvStatus,
@@ -88,9 +87,6 @@ export default class DirenvService extends Service {
 			.default(defaultConfig.probeTimeoutMs),
 		notifyOnBlocked: z.boolean().default(defaultConfig.notifyOnBlocked),
 		sessionContext: z.boolean().default(defaultConfig.sessionContext),
-		restrictAllowToWorkspace: z
-			.boolean()
-			.default(defaultConfig.restrictAllowToWorkspace),
 	}) as z<DirenvConfig>;
 
 	/**
@@ -228,23 +224,12 @@ export default class DirenvService extends Service {
 		return describeStatus(this.statusFor(workspace));
 	}
 
-	/** The refusal reason for approving an RC on behalf of a workspace. */
-	refusalFor(
-		rcPath: string,
-		workspace: string | undefined,
-	): string | undefined {
-		return refuseAllow(rcPath, workspace, this.config.restrictAllowToWorkspace);
-	}
-
 	/** Approve current file content after explicit user consent. Does not reload. */
 	async approve(
-		rcPath: string,
-		workspace: string | undefined,
+		workspace: string,
 	): Promise<{ ok: true } | { ok: false; reason: string }> {
-		const refusal = this.refusalFor(rcPath, workspace);
-		if (refusal !== undefined) return { ok: false, reason: refusal };
 		try {
-			await runAllow(rcPath, this.config);
+			await runAllow(workspace, this.config);
 		} catch (error) {
 			const failure = error as ExecFileException & { stderr?: string };
 			const detail = firstLine(failure.stderr ?? "");
@@ -271,10 +256,11 @@ export function firstLine(text: string): string {
 
 /** Run direnv allow with a fixed argv, without blocking the event loop. */
 export async function runAllow(
-	rcPath: string,
+	workspace: string,
 	config: DirenvConfig,
 ): Promise<void> {
-	await execFileNoStdin(config.executable, ["allow", rcPath], {
+	await execFileNoStdin(config.executable, ["allow"], {
+		cwd: workspace,
 		timeout: config.probeTimeoutMs,
 		maxBuffer: 1024 * 1024,
 		killSignal: "SIGKILL",

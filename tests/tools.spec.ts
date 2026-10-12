@@ -76,8 +76,11 @@ interface CapturedTool {
 	) => Promise<Record<string, unknown>>;
 }
 
-/** Records the RC path passed to the mocked child process. */
-type AllowSpy = (rcPath: string) => {
+/** Records the cwd and argv passed to native direnv allow. */
+type AllowSpy = (
+	cwd: string,
+	args: readonly string[],
+) => {
 	code: number;
 	stdout: string;
 	stderr: string;
@@ -189,7 +192,7 @@ async function harness(
 	vi.mocked(ChildProcess.spawn).mockImplementation((command, args, opts) => {
 		if (args?.[0] === "allow")
 			return completeCommand(
-				{ ...allowSpy(String(args[1])), signal: null },
+				{ ...allowSpy(String(opts?.cwd), args), signal: null },
 				new ChildProcess.ChildProcess(),
 			);
 		if (args?.[0] !== "export") return exec(command, args, opts);
@@ -246,7 +249,7 @@ async function harness(
 }
 
 describe("direnv_allow registration", () => {
-	it("registers a tool named direnv_allow with a required path parameter", async () => {
+	it("registers allow with only optional reason and reload without parameters", async () => {
 		const h = await harness();
 		try {
 			const definition = capturedTool("direnv_allow");
@@ -256,9 +259,11 @@ describe("direnv_allow registration", () => {
 				properties: Record<string, unknown>;
 				required: string[];
 			};
-			expect(Object.keys(parameters.properties)).toContain("path");
-			expect(Object.keys(parameters.properties)).toContain("reason");
-			expect(parameters.required).toEqual(["path"]);
+			expect(Object.keys(parameters.properties)).toEqual(["reason"]);
+			expect(parameters.required ?? []).toEqual([]);
+			expect(capturedTool("direnv_reload")?.parameters).toMatchObject({
+				properties: {},
+			});
 		} finally {
 			await h.dispose();
 		}
@@ -273,18 +278,17 @@ describe("approval gate", () => {
 		expect(approval).toBeUndefined();
 	});
 
-	it("asks the user exactly once with the tool identity, call id, and path", async () => {
+	it("asks the user exactly once with the tool identity, call id, and workspace", async () => {
 		const h = await harness();
 		try {
 			const result = await h.call({
-				path: h.rcPath,
 				reason: "the build needs the toolchain",
 			});
 			expect(asked).toHaveLength(1);
 			const request = asked[0];
 			expect(request?.toolName).toBe("direnv_allow");
 			expect(request?.callId).toBe("call-1");
-			expect(request?.reason).toContain(h.rcPath);
+			expect(request?.reason).toContain(h.workspace);
 			expect(request?.reason).toContain("the build needs the toolchain");
 			expect(request?.reason).not.toContain("export ALLOW_TOOL_TEST=1");
 			expect(request?.reason).not.toContain("sha256:");
@@ -297,9 +301,9 @@ describe("approval gate", () => {
 	it("performs the approval only after an allowed-once outcome", async () => {
 		const h = await harness({ outcome: "allowed-once" });
 		try {
-			const result = await h.call({ path: h.rcPath });
+			const result = await h.call({});
 			expect(h.allowSpy).toHaveBeenCalledTimes(1);
-			expect(h.allowSpy).toHaveBeenCalledWith(h.rcPath);
+			expect(h.allowSpy).toHaveBeenCalledWith(h.workspace, ["allow"]);
 			expect(result.outcome).toBe("approved");
 			expect(String(result.detail)).toContain("approved");
 		} finally {
@@ -310,7 +314,7 @@ describe("approval gate", () => {
 	it("never approves when the user rejects", async () => {
 		const h = await harness({ outcome: "rejected" });
 		try {
-			const result = await h.call({ path: h.rcPath });
+			const result = await h.call({});
 			expect(asked).toHaveLength(1);
 			expect(h.allowSpy).not.toHaveBeenCalled();
 			expect(result.outcome).toBe("rejected");
@@ -322,7 +326,7 @@ describe("approval gate", () => {
 	it("never approves when the question is cancelled", async () => {
 		const h = await harness({ outcome: "cancelled" });
 		try {
-			const result = await h.call({ path: h.rcPath });
+			const result = await h.call({});
 			expect(h.allowSpy).not.toHaveBeenCalled();
 			expect(result.outcome).toBe("cancelled");
 		} finally {
@@ -333,7 +337,7 @@ describe("approval gate", () => {
 	it("never approves when no answerer is reachable", async () => {
 		const h = await harness({ outcome: "unavailable" });
 		try {
-			const result = await h.call({ path: h.rcPath });
+			const result = await h.call({});
 			expect(h.allowSpy).not.toHaveBeenCalled();
 			expect(result.outcome).toBe("unavailable");
 		} finally {
@@ -353,91 +357,64 @@ describe("approval gate", () => {
 	});
 });
 
-describe("refusals happen before any user is asked", () => {
-	const cases: Array<[string, (h: Harness) => string]> = [
-		["a relative path", () => ".envrc"],
-		[
-			"an absolute path outside the workspace",
-			() => {
-				const outside = scratch("dsh-direnv-outside-");
-				const rc = join(outside, ".envrc");
-				writeFileSync(rc, "export X=1\n");
-				return rc;
-			},
-		],
-		[
-			"a file that is not a direnv RC name",
-			(h) => {
-				const other = join(h.workspace, "evil.sh");
-				writeFileSync(other, "echo hi\n");
-				return other;
-			},
-		],
-	];
-
-	for (const [label, make] of cases) {
-		it(`refuses ${label} without asking or approving`, async () => {
-			const h = await harness();
-			try {
-				const result = await h.call({ path: make(h) });
-				expect(result.outcome).toBe("refused");
-				expect(asked).toHaveLength(0);
-				expect(h.allowSpy).not.toHaveBeenCalled();
-			} finally {
-				await h.dispose();
+describe("native approval without plugin validation", () => {
+	it("leaves native parent RC selection to direnv", async () => {
+		const rcPath = join(scratch(), ".envrc");
+		writeFileSync(rcPath, "export X=1\n");
+		const h = await harness({ rcPath });
+		try {
+			expect((await h.call({})).outcome).toBe("approved");
+			expect(asked).toHaveLength(1);
+			expect(asked[0]?.reason).toContain(h.workspace);
+			expect(h.allowSpy).toHaveBeenCalledWith(h.workspace, ["allow"]);
+		} finally {
+			await h.dispose();
+		}
+	});
+	it("lets direnv reject a missing RC after user approval", async () => {
+		const h = await harness({
+			allowCode: 1,
+			allowStderr: "direnv: error no RC found",
+		});
+		try {
+			vi.mocked(Core.readNativeStatus).mockResolvedValue(null);
+			expect((await h.call({})).outcome).toBe("refused");
+			expect(asked).toHaveLength(1);
+			expect(h.allowSpy).toHaveBeenCalledWith(h.workspace, ["allow"]);
+			expect(Core.readNativeStatus).not.toHaveBeenCalled();
+		} finally {
+			await h.dispose();
+		}
+	});
+	it("does not ask without an agent or session workspace", async () => {
+		const h = await harness();
+		try {
+			for (const agent of [undefined, { session: { header: {} } }]) {
+				const result = await h.call({}, { agent });
+				expect(result.outcome).toBe("unavailable");
+				expect(String(result.detail)).toContain(
+					"no agent or session workspace",
+				);
 			}
-		});
-	}
-
-	it("refuses a valid path when there is no workspace to scope it to", async () => {
-		// With the workspace restriction on, an agentless call has no workspace and
-		// the path is refused before anyone could be asked.
-		const h = await harness({ config: { restrictAllowToWorkspace: true } });
-		try {
-			const result = await h.call({ path: h.rcPath }, { agent: undefined });
-			expect(result.outcome).toBe("refused");
-			expect(String(result.detail)).toContain("no workspace");
 			expect(asked).toHaveLength(0);
 			expect(h.allowSpy).not.toHaveBeenCalled();
 		} finally {
 			await h.dispose();
 		}
 	});
-
-	it("refuses an agentless call as unavailable once the workspace restriction is off", async () => {
-		// Isolation of the agent check: with scoping disabled the path itself is
-		// approvable, so what stops the call is the absence of an agent to route
-		// the question through. Nothing may be approved without a user.
-		const h = await harness({ config: { restrictAllowToWorkspace: false } });
+	it("does not check native status before executing allow", async () => {
+		const h = await harness();
 		try {
-			const result = await h.call({ path: h.rcPath }, { agent: undefined });
-			expect(result.outcome).toBe("unavailable");
-			expect(String(result.detail)).toContain("no agent");
-			expect(asked).toHaveLength(0);
-			expect(h.allowSpy).not.toHaveBeenCalled();
+			vi.mocked(Core.readNativeStatus).mockRejectedValue(
+				new Error("status failed"),
+			);
+			const result = await h.call({});
+			expect(asked).toHaveLength(1);
+			expect(h.allowSpy).toHaveBeenCalledWith(h.workspace, ["allow"]);
+			expect(result.outcome).toBe("approved");
+			expect(result).not.toHaveProperty("path");
 		} finally {
 			await h.dispose();
-		}
-	});
-
-	it("refuses a path outside the workspace only when the restriction is on", async () => {
-		const strict = await harness({
-			config: { restrictAllowToWorkspace: true },
-		});
-		const lax = await harness({ config: { restrictAllowToWorkspace: false } });
-		try {
-			const outside = scratch("dsh-direnv-shared-");
-			const rc = join(outside, ".envrc");
-			writeFileSync(rc, "export X=1\n");
-			expect((await strict.call({ path: rc })).outcome).toBe("refused");
-			expect(strict.allowSpy).not.toHaveBeenCalled();
-			// With the restriction off, the same path is approvable — the user still decides.
-			const laxResult = await lax.call({ path: rc });
-			expect(laxResult.outcome).toBe("approved");
-			expect(lax.allowSpy).toHaveBeenCalledTimes(1);
-		} finally {
-			await strict.dispose();
-			await lax.dispose();
 		}
 	});
 });
@@ -448,7 +425,7 @@ describe("after an approval", () => {
 		try {
 			// The injected probe returns an empty diff, so the count is zero; the
 			// contract under test is that the count is reported, not its value.
-			const result = await h.call({ path: h.rcPath });
+			const result = await h.call({});
 			expect(result.outcome).toBe("approved");
 			expect(typeof result.variables).toBe("number");
 			expect(result.path).toBe(h.rcPath);
@@ -458,7 +435,7 @@ describe("after an approval", () => {
 		}
 	});
 
-	it("reports the fixed workspace environment even when approving a nested RC", async () => {
+	it("refreshes only the workspace even when a nested RC exists", async () => {
 		const workspace = scratch();
 		const nested = join(workspace, "packages", "inner");
 		mkdirSync(nested, { recursive: true });
@@ -472,7 +449,6 @@ describe("after an approval", () => {
 		const h = await harness({
 			config: { enabled: true },
 			workspace,
-			rcPath,
 			probed,
 			// Only the nested directory has an environment; the workspace root does not.
 			exportFor: (dir) =>
@@ -481,7 +457,7 @@ describe("after an approval", () => {
 					: "{}",
 		});
 		try {
-			const result = await h.call({ path: rcPath });
+			const result = await h.call({});
 			expect(result.outcome).toBe("approved");
 			expect(result.variables).toBe(0);
 			expect(probed).toContain(workspace);
@@ -497,7 +473,7 @@ describe("after an approval", () => {
 			allowStderr: "direnv: error cannot write",
 		});
 		try {
-			const result = await h.call({ path: h.rcPath });
+			const result = await h.call({});
 			expect(result.outcome).toBe("refused");
 			expect(h.allowSpy).toHaveBeenCalledTimes(1);
 			expect(String(result.detail)).toContain("direnv refused the write");
@@ -519,9 +495,9 @@ describe("after an approval", () => {
 				allowStderr: "direnv: error invalid RC",
 			});
 			try {
-				const result = await h.call({ path: rcPath });
+				const result = await h.call({});
 				expect(asked).toHaveLength(1);
-				expect(h.allowSpy).toHaveBeenCalledWith(rcPath);
+				expect(h.allowSpy).toHaveBeenCalledWith(workspace, ["allow"]);
 				expect(result.outcome).toBe("refused");
 				expect(String(result.detail)).toContain("direnv: error invalid RC");
 			} finally {
@@ -529,4 +505,36 @@ describe("after an approval", () => {
 			}
 		},
 	);
+});
+
+describe("workspace-only reload", () => {
+	it("reloads only the calling workspace even when others have snapshots", async () => {
+		const h = await harness();
+		try {
+			const other = scratch();
+			await h.ctx.direnv.reload(other);
+			const reload = vi.spyOn(h.ctx.direnv, "reload");
+			const result = await capturedTool("direnv_reload")?.execute(
+				{},
+				{
+					agent: { session: { header: { cwd: h.workspace } } },
+				},
+			);
+			expect(reload).toHaveBeenCalledWith(h.workspace);
+			expect(result?.reloaded).toBe(1);
+		} finally {
+			await h.dispose();
+		}
+	});
+	it("does not reload anything without a session workspace", async () => {
+		const h = await harness();
+		try {
+			const reload = vi.spyOn(h.ctx.direnv, "reload");
+			const result = await capturedTool("direnv_reload")?.execute({}, {});
+			expect(result?.reloaded).toBe(0);
+			expect(reload).not.toHaveBeenCalled();
+		} finally {
+			await h.dispose();
+		}
+	});
 });

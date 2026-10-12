@@ -2,35 +2,21 @@
  * Core tests: validation, command execution, diff parsing, and refusals.
  * Command tests use the current Node binary; no direnv installation needed.
  */
-import {
-	mkdirSync,
-	mkdtempSync,
-	rmSync,
-	symlinkSync,
-	writeFileSync,
-} from "node:fs";
-import { dirname } from "node:path";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import * as fs from "node:fs";
 import {
-	isWithin,
 	isAbsolutePath,
 	assertAbsolutePath,
 	parseExport,
 	runExport,
 	resolveStatus,
-	refuseAllow,
 	selectInjectable,
 	hasAppliedEntries,
 	defaultConfig,
 } from "../src/core.js";
 import DirenvService from "../src/provider.js";
-
-vi.mock("node:fs", async (importOriginal) => ({
-	...(await importOriginal<typeof import("node:fs")>()),
-}));
 
 const created: string[] = [];
 function scratch(): string {
@@ -247,100 +233,6 @@ describe("hasAppliedEntries", () => {
 		).toBe(false);
 		expect(hasAppliedEntries({ DIRENV_DIFF: "x", REAL: "1" })).toBe(true);
 		expect(hasAppliedEntries({})).toBe(false);
-	});
-});
-
-describe("refuseAllow", () => {
-	it("accepts an absolute .envrc inside the workspace", () => {
-		const ws = scratch();
-		const rc = join(ws, ".envrc");
-		writeFileSync(rc, "export A=1\n");
-		expect(refuseAllow(rc, ws, true)).toBeUndefined();
-	});
-
-	it("refuses a path outside the workspace when restricted", () => {
-		const ws = scratch();
-		const other = scratch();
-		const rc = join(other, ".envrc");
-		writeFileSync(rc, "export A=1\n");
-		expect(refuseAllow(rc, ws, true)).toMatch(/outside the calling workspace/);
-		expect(refuseAllow(rc, ws, false)).toBeUndefined();
-	});
-
-	it("accepts a nested path inside the workspace", () => {
-		const ws = scratch();
-		mkdirSync(join(ws, "sub"));
-		const rc = join(ws, "sub", ".envrc");
-		writeFileSync(rc, "export A=1\n");
-		expect(refuseAllow(rc, ws, true)).toBeUndefined();
-	});
-
-	it("refuses relative paths and wrong basenames, leaving file checks to direnv", () => {
-		const ws = scratch();
-		expect(refuseAllow(".envrc", ws, true)).toBe("invalid path");
-		expect(refuseAllow(join(ws, "evil.sh"), ws, true)).toMatch(
-			/must name one of/,
-		);
-		expect(refuseAllow(join(ws, ".envrc"), ws, true)).toBeUndefined();
-		mkdirSync(join(ws, ".env"));
-		expect(refuseAllow(join(ws, ".env"), ws, true)).toBeUndefined();
-	});
-
-	it("refuses any absolute path when the call has no workspace", () => {
-		const dir = scratch();
-		const rc = join(dir, ".envrc");
-		writeFileSync(rc, "export A=1\n");
-		expect(refuseAllow(rc, undefined, true)).toMatch(/no workspace/);
-	});
-
-	it("checks path policy without inspecting the target file", () => {
-		const ws = scratch();
-		const rc = join(scratch(), ".envrc");
-		const stat = vi.spyOn(fs, "statSync");
-		expect(refuseAllow(rc, ws, true)).toMatch(/outside the calling workspace/);
-		expect(refuseAllow(rc, undefined, true)).toMatch(/no workspace/);
-		expect(refuseAllow(join(ws, ".envrc"), ws, true)).toBeUndefined();
-		expect(stat).not.toHaveBeenCalled();
-	});
-});
-
-describe("isWithin", () => {
-	it("accepts the root itself and true descendants, rejecting siblings and prefixes", () => {
-		const root = scratch();
-		const inside = join(root, "sub");
-		mkdirSync(inside);
-		expect(isWithin(root, root)).toBe(true);
-		expect(isWithin(root, inside)).toBe(true);
-		expect(isWithin(root, `${root}bc`)).toBe(false);
-		expect(isWithin(root, dirname(root))).toBe(false);
-	});
-
-	it("rejects a .. traversal that escapes the workspace", () => {
-		const root = scratch();
-		const outside = scratch();
-		const escaped = join(
-			root,
-			"..",
-			outside.slice(outside.lastIndexOf("/") + 1),
-			".envrc",
-		);
-		expect(isWithin(root, escaped)).toBe(false);
-	});
-
-	it("rejects a symlink that points outside the workspace", () => {
-		const root = scratch();
-		const outside = scratch();
-		writeFileSync(join(outside, ".envrc"), "export A=1\n");
-		symlinkSync(join(outside, ".envrc"), join(root, ".envrc"));
-		// The link is named .envrc inside the workspace, but its target is not.
-		expect(isWithin(root, join(root, ".envrc"))).toBe(false);
-	});
-
-	it("accepts a symlinked workspace root itself", () => {
-		const root = scratch();
-		const link = join(scratch(), "link");
-		symlinkSync(root, link);
-		expect(isWithin(link, root)).toBe(true);
 	});
 });
 

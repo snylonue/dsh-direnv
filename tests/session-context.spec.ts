@@ -105,7 +105,7 @@ describe("sessionContextText", () => {
 			{ kind: "blocked", rcPath: "/ws/.envrc", env: {}, dropped: [] },
 			"/ws",
 		);
-		expect(text).toContain("direnv_allow path=/ws/.envrc");
+		expect(text).toContain("Call the direnv_allow tool");
 		expect(text).toContain("Workspace: /ws");
 		expect(text).not.toContain("This command ran");
 	});
@@ -253,7 +253,7 @@ describe("injectSessionContext", () => {
 			expect(app.injected).toHaveLength(1);
 			const text = (app.injected[0]?.content[0] as { text: string } | undefined)
 				?.text;
-			expect(text).toContain(`direnv_allow path=${rcPath}`);
+			expect(text).toContain("Call the direnv_allow tool");
 			expect(app.probeCalls()).toBe(0);
 		} finally {
 			await app.dispose();
